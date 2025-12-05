@@ -1,0 +1,484 @@
+import numpy as np
+import matplotlib.pyplot as plt
+from dataclasses import dataclass
+from typing import Optional
+from prettytable import PrettyTable
+import pandas as pd
+import csv
+import os
+np.set_printoptions(legacy='1.25')
+
+# bump is applied vertically 
+# sus points class has: geometry information for a given wheel
+# master sus points class has: four sus points
+# contact patch class has: contact patch forces/moments/location.
+# linkload class has: link loads for a wheel
+# corner class has: sus points, contact patch, linkload objects. calculates linkloads from sus points and contactpatch info
+# carprops class has: car properties
+# master contact patch class has: four contact patches, calculated from carprops and acceleration
+# car class has: four corners, carprops, master contact patch. constructs corners from sus, constructs master contact patch from carprops and acceleration
+# tire ellipse: generates ellipse points from parameters in gs
+
+class SusPoints:
+    '''SusPoints class contains all the geometric information for the suspension points relevant to a single wheel, sorted by inboard and outboard as relevant. It also contains the vectors for suspension members (directed away from the upright).'''
+    def __init__(self,lowFore,lowAft,lbj,upFore,upAft,ubj,tieIn,tieOut,pushIn,pushOut,pivotFore,pivotAft,heave,roll):
+        self.lowFore = np.array(lowFore)
+        self.lowAft = np.array(lowAft)
+        self.lbj = np.array(lbj)
+        self.upFore = np.array(upFore)
+        self.upAft = np.array(upAft)
+        self.ubj = np.array(ubj)
+        self.tieIn = np.array(tieIn)
+        self.tieOut = np.array(tieOut)
+        self.pushIn = np.array(pushIn)
+        self.pushOut = np.array(pushOut)
+        self.pivotFore = np.array(pivotFore)
+        self.pivotAft = np.array(pivotAft)
+        self.heave = np.array(heave)
+        self.roll = np.array(roll)
+        self.lowForeVec = self.lowFore - self.lbj
+        self.lowAftVec = self.lowAft - self.lbj
+        self.upForeVec = self.upFore - self.ubj
+        self.upAftVec = self.upAft - self.ubj
+        self.tieVec = self.tieIn - self.tieOut
+        self.pushVec = self.pushIn - self.pushOut
+        self.linkVecList = [self.lowForeVec, self.lowAftVec, self.upForeVec, self.upAftVec, self.tieVec, self.pushVec]
+@dataclass
+class MasterSusPoints:
+    '''MasterSusPoints is a dataclass of four SusPoint objects, one for each wheel.'''
+    FL: 'SusPoints'
+    FR: 'SusPoints'
+    RL: 'SusPoints'
+    RR: 'SusPoints'
+    name: Optional[str] = None
+class ContactPatch:
+    '''Contactpatch is a class that contains the coordinates of a given contact patch as well as the forces ON THE WHEEL and the moments about the contact patch ON THE WHEEL'''
+    def __init__ (self,forces:np.ndarray,moments:np.ndarray,contact_point_coords:np.ndarray):
+        self.contact_patch_forces = forces
+        self.contact_patch_moments = moments
+        self.contact_point_coords = contact_point_coords
+        self.combined_load = np.concatenate((forces,moments))
+class LinkLoad:
+    '''LinkLoad stores the loads (tension positive) in each of the sus links for a wheel.'''
+    def __init__ (self,lowFore:float,lowAft:float,upFore:float,upAft:float,tie:float,push:float):
+        self.lowFore = lowFore
+        self.lowAft = lowAft
+        self.upFore = upFore
+        self.upAft = upAft
+        self.tie = tie
+        self.push = push
+        self.loadlist = [lowFore,lowAft,upFore,upAft,tie,push]
+class Corner:
+    '''Corner objects contain all the information about one corner of the car: sus points, contact patch, and loads. When we create the car, it will consist of four corner objects. We give the corner object suspension points and contact patch information, and it calculates link loads.'''
+    def __init__ (self,sus:SusPoints,contact_patch:ContactPatch,link_load:LinkLoad=None):
+        self.contact_patch = contact_patch
+        self.sus = sus
+        # Given the information about contact patch forces, construct link loads
+        cp_to_link = self._contact_patch_loads_to_link_loads()
+        self.link_load = LinkLoad(* (cp_to_link @ contact_patch.combined_load).flatten())
+    def _contact_patch_loads_to_link_loads(self):
+        '''Construct a matrix that transforms a 6-vector of contact patch forces and moments (Fx,Fy,Fz,Mx,My,Mz) into a 6-vector of link loads (tensions in lowFore, lowAft, upFore, upAft, tie, push). Keep in mind that the contact_patch.combined_load vector are the forces and moments ON THE WHEEL.'''
+        link_vectors = self.sus.linkVecList
+        cp_location = self.contact_patch.contact_point_coords
+        r_from_contact_patch = [ point - cp_location for point in [self.sus.lbj,self.sus.lbj,self.sus.ubj,self.sus.ubj,self.sus.tieOut,self.sus.pushOut]] # positions of link attachment points relative to contact patch (for moment calculation)
+        f_hats = np.array([vec/np.linalg.norm(vec) for vec in link_vectors])
+        moment_multipliers = np.array([np.cross(r, f_hat) for r, f_hat in zip(r_from_contact_patch, f_hats)]) # each row is the moment generated by a unit force in the link
+        link_loads_to_cp_loads = np.vstack((f_hats.T, moment_multipliers.T)) # 6x6 matrix transforming link loads to contact patch loads
+        cp_loads_to_link_loads = -1*np.linalg.inv(link_loads_to_cp_loads)
+        # We multiply by -1 because cp.combined_load gives the loads on the wheel, so link_to_cp @ link_loads + cp.combined_load = 0, whence link_loads = -cp_to_link @ cp.combined_load
+        return cp_loads_to_link_loads
+@dataclass
+class CarProps:
+    '''CarProps is a dataclass with lots of important car properties.'''
+    wheelbase: float
+    trackwidth: float
+    cg_height: float
+    mass: float
+    cp_height: float
+    aero_load: float
+    drag_force: float
+    fwb: float
+    aero_fwb: float
+    gear_ratio: float
+    max_amk_torque: float
+    tire_radius: float
+    LLTD: float
+    bump_amount: float
+    bump_moment_arm_outward: float
+class MasterContactPatch:
+    '''MasterContactPatch objects are made with car acceleration and properties, and generates four ContactPatch objects, one for each wheel, by calculating contact patch loads for each wheel using a very simplified load model that says a given LLTD of the lateral load transfer is borne by the front axle. With a conservative sweep of LLTD values, we can get enough of an idea of link load ranges for sizing. finally!'''
+    def __init__(self,a_x:float,a_y:float,props:CarProps):
+        self.a_x = a_x
+        self.a_y = a_y
+        self.props = props
+        m = props.mass
+        g = 9.81 #MY26 is (in most situations) on earth. MYMoon and MYHell haven't yet begun development.
+        wheel_center_coord = np.array([props.wheelbase/2, 0, 0])
+        hwb,htw = props.wheelbase/2,props.trackwidth/2
+        
+        LLTD = self.props.LLTD #fraction of lateral load transfer borne by front axle.
+
+        N_fl,N_fr,N_rl,N_rr = self._normal_solver(a_x,a_y,LLTD)
+        N_total = N_fl + N_fr + N_rl + N_rr
+        forces = [np.array([a_x*m*N/N_total,a_y*m*N/N_total,-N]) for N in [N_fl,N_fr,N_rl,N_rr]]
+        bump_moment_arm_RH = np.array([props.bump_moment_arm_outward,0,0])
+        bump_moment_arm_LH = np.array([-props.bump_moment_arm_outward,0,0])
+        bump_force = np.array([0,0,props.bump_amount])
+        RH_bump = np.cross(bump_moment_arm_RH,bump_force)
+        LH_bump = np.cross(bump_moment_arm_LH,bump_force)
+
+        cp_offset_list = [[hwb,-htw,0],[hwb,htw,0],[-hwb,-htw,0],[-hwb,htw,0]] 
+        cp_list = [np.array(cp) + wheel_center_coord for cp in cp_offset_list] # list of places where we find C.P. (fl,fr,rl,rr as always)
+
+        [fl_cp_coord,fr_cp_coord,rl_cp_coord,rr_cp_coord] = cp_list
+
+        self.flCP = ContactPatch(forces[0],LH_bump,fl_cp_coord)
+        self.frCP = ContactPatch(forces[1],RH_bump,fr_cp_coord)
+        self.rlCP = ContactPatch(forces[2],LH_bump,rl_cp_coord)
+        self.rrCP = ContactPatch(forces[3],RH_bump,rr_cp_coord)
+    def _normal_solver(self,a_x,a_y,LLTD):
+        '''Given long,lat acceleration and lateral load transfer front bias, return normal loads on each tire.'''
+        g = 9.81
+        m = self.props.mass
+        aero = self.props.aero_load
+        fwb = self.props.fwb
+        aero_fwb = self.props.aero_fwb
+        drag = self.props.drag_force
+        h_cp = self.props.cp_height
+        wheelbase = self.props.wheelbase
+        trackwidth = self.props.trackwidth
+        # F/B balance via bicycle model:
+        #   Z axis force balance:
+        #       N_f+N_r = m*g + aero
+        #   Rear contact patch moment balance:
+        #       N_f*wheelbase = m*g*wheelbase*fwb + aero*wheelbase*aero_fwb - drag*h_cp - m*a_x*h_cp
+        N_front = (m * g * wheelbase * fwb + aero * wheelbase * aero_fwb - drag * h_cp - m * a_x * h_cp) / wheelbase
+        N_rear = m*g + aero - N_front
+        # L/R balance:
+        #   Total lateral load transfer:
+        #       N_l + N_r = m*g+aero
+        #   Moment about left contact patch:
+        #       N_r*trackwidth = m*a_y*h_cp + aero*trackwidth/2 + m*g*trackwidth/2
+        N_r = (m*a_y*h_cp + (m*g + aero)*trackwidth/2)/trackwidth
+        N_l = m * g + aero - N_r
+        LLT = N_l - N_r
+        # in the positive case, left tire has more load than right
+        LLT_f = LLT * LLTD
+        LLT_r = LLT * (1 - LLTD)
+        N_fl = max(N_front / 2 - LLT_f / 2,0)+self.props.bump
+        N_fr = max(N_front / 2 + LLT_f / 2,0)+self.props.bump
+        N_rl = max(N_rear / 2 - LLT_r / 2,0)+self.props.bump
+        N_rr = max(N_rear / 2 + LLT_r / 2,0)+self.props.bump
+        return N_fl,N_fr,N_rl,N_rr
+class Car:
+    '''Quite a big class. Contains all four sus points, properties, and a given acceleratrion. From the acceleration and properties, it constructs a MasterContactPatch, and for each of these contact patches and corresponding sus points, it constructs a Corner object which calculates link loads. Succintish way to go from car + sus + accel to link loads. Hoozah.'''
+    def __init__(self,sus:MasterSusPoints,props:CarProps,a_x:float,a_y:float):
+        self.wheelbase = props.wheelbase
+        self.trackwidth = props.trackwidth
+        self.flSus = sus.FL
+        self.frSus = sus.FR
+        self.rlSus = sus.RL
+        self.rrSus = sus.RR
+        self.props = props
+        self.masterCP = MasterContactPatch(a_x,a_y,props)
+        self.flCP = self.masterCP.flCP
+        self.frCP = self.masterCP.frCP
+        self.rlCP = self.masterCP.rlCP
+        self.rrCP = self.masterCP.rrCP
+        self.flCorner = Corner(self.flSus,self.flCP)
+        self.frCorner = Corner(self.frSus,self.frCP)
+        self.rlCorner = Corner(self.rlSus,self.rlCP)
+        self.rrCorner = Corner(self.rrSus,self.rrCP)
+def tire_ellipse(max_accel_g,max_braking_g,max_lateral_g,num_points):
+    '''Generate points a_x,a_y for a tire ellipse in list form.'''
+    g = 9.81
+    max_accel = max_accel_g * g
+    max_braking = max_braking_g * g
+    max_lateral = max_lateral_g * g
+    angles = np.linspace(0,2*np.pi,num_points)
+    a_x_points = abs(max_braking) * np.sin(angles)
+    a_y_points = max_lateral * np.cos(angles)
+    ellipse_points = [(min(a_x,max_accel),a_y) for a_x,a_y in zip(a_x_points,a_y_points)]
+    return ellipse_points
+def analyze_link_loads(fl_link_loads,fr_link_loads,rl_link_loads,rr_link_loads):
+    '''Return max and min link loads for each corner given time-indexed link loads lists.'''
+    def get_max_min(link_loads):
+        load_array = np.array([[load.lowFore,load.lowAft,load.upFore,load.upAft,load.tie,load.push] for load in link_loads])
+        max_loads = np.max(load_array,axis=0)
+        min_loads = np.min(load_array,axis=0)
+        return max_loads,min_loads
+    fl_max,fl_min = get_max_min(fl_link_loads)
+    fr_max,fr_min = get_max_min(fr_link_loads)
+    rl_max,rl_min = get_max_min(rl_link_loads)
+    rr_max,rr_min = get_max_min(rr_link_loads)
+    return (fl_max,fl_min),(fr_max,fr_min),(rl_max,rl_min),(rr_max,rr_min)
+def real_sweep_tire_ellipse(tire_ellipse,masterSus,props):
+    list_of_cars = []
+    for a_x,a_y in tire_ellipse:
+        car = Car(sus=masterSus,props=props,a_x=a_x,a_y=a_y)
+        list_of_cars.append(car)
+    return list_of_cars
+def get_link_loads_from_carlist(list_of_cars):
+    fl_link_loads = [] #list of LinkLoad objects
+    fr_link_loads = []
+    rl_link_loads = []
+    rr_link_loads = []
+    for car in list_of_cars:
+        fl_link_loads.append(car.flCorner.link_load.loadlist)
+        fr_link_loads.append(car.frCorner.link_load.loadlist)
+        rl_link_loads.append(car.rlCorner.link_load.loadlist)
+        rr_link_loads.append(car.rrCorner.link_load.loadlist)
+    return fl_link_loads,fr_link_loads,rl_link_loads,rr_link_loads
+def get_link_loads_from_car(car):
+    fl_link_load = car.flCorner.link_load.loadlist
+    fr_link_load = car.frCorner.link_load.loadlist
+    rl_link_load = car.rlCorner.link_load.loadlist
+    rr_link_load = car.rrCorner.link_load.loadlist
+    return fl_link_load,fr_link_load,rl_link_load,rr_link_load
+def get_extreme_linkload(everything_bagel):
+    '''Given dictionary of (LLTD,bump):list_of_cars, return dictionary of (LLTD,bump,ax,ay):(max link loads for each corner) for all points'''
+    maxlinkload_dict = {}
+    minlinkload_dict = {}
+    for ellipse_point_key in everything_bagel:
+        ellipse_point_dict= everything_bagel[ellipse_point_key]
+        for prop_key in ellipse_point_dict:
+            my_car_list = ellipse_point_dict[prop_key]
+            fl_link_loads,fr_link_loads,rl_link_loads,rr_link_loads = get_link_loads_from_carlist(my_car_list)
+            fr_max_list,fr_min_list = np.max(np.array(fr_link_loads),axis=0).flatten(),np.min(np.array(fr_link_loads),axis=0).flatten()
+            fl_max_list,fl_min_list = np.max(np.array(fl_link_loads),axis=0).flatten(),np.min(np.array(fl_link_loads),axis=0).flatten()
+            rl_max_list,rl_min_list = np.max(np.array(rl_link_loads),axis=0).flatten(),np.min(np.array(rl_link_loads),axis=0).flatten()
+            rr_max_list,rr_min_list = np.max(np.array(rr_link_loads),axis=0).flatten(),np.min(np.array(rr_link_loads),axis=0).flatten()
+            maxlinkload_dict[ellipse_point_key] = (fl_max_list,fr_max_list,rl_max_list,rr_max_list,prop_key)
+            minlinkload_dict[ellipse_point_key] = (fl_min_list,fr_min_list,rl_min_list,rr_min_list,prop_key)
+    return maxlinkload_dict,minlinkload_dict
+def get_maxmin_linkload(corner_linkload_dict,selector):
+    all_link_forces = np.vstack(list(corner_linkload_dict.values()))
+    if selector == "tension":
+        return all_link_forces.max(axis=0)
+    elif selector == "compression":
+        return all_link_forces.min(axis=0)
+def get_corner_tensile_extremes(maxlinkload_dict):
+    fl_corner_dict = {}
+    fr_corner_dict = {}
+    rl_corner_dict = {}
+    rr_corner_dict = {}
+    for key in maxlinkload_dict:
+        fl_list,fr_list,rl_list,rr_list,_ = maxlinkload_dict[key]
+        fl_corner_dict[key] = fl_list
+        fr_corner_dict[key] = fr_list
+        rl_corner_dict[key] = rl_list
+        rr_corner_dict[key] = rr_list
+    fl_max = get_maxmin_linkload(fl_corner_dict,"tension")
+    fr_max = get_maxmin_linkload(fr_corner_dict,"tension")
+    rl_max = get_maxmin_linkload(rl_corner_dict,"tension")
+    rr_max = get_maxmin_linkload(rr_corner_dict,"tension")
+    return [fl_max,fr_max,rl_max,rr_max]
+def get_corner_compressive_extremes(minlinkload_dict):
+    fl_corner_dict = {}
+    fr_corner_dict = {}
+    rl_corner_dict = {}
+    rr_corner_dict = {}
+    for key in minlinkload_dict:
+        fl_list,fr_list,rl_list,rr_list,_ = minlinkload_dict[key]
+        fl_corner_dict[key] = fl_list
+        fr_corner_dict[key] = fr_list
+        rl_corner_dict[key] = rl_list
+        rr_corner_dict[key] = rr_list
+    fl_min = get_maxmin_linkload(fl_corner_dict,"compression")
+    fr_min = get_maxmin_linkload(fr_corner_dict,"compression")
+    rl_min = get_maxmin_linkload(rl_corner_dict,"compression")
+    rr_min = get_maxmin_linkload(rr_corner_dict,"compression")
+    return [fl_min,fr_min,rl_min,rr_min]
+FLsusPointsFromNico = """1681.6	-204.5	-101.1
+1432.4	-204.5	-108.8
+1540.1	-588.2	-100.9
+1670.6	-257.8	-231.9
+1428.6	-257.8	-210.1
+1523.5	-540.8	-291.0
+1638.3	-213.7	-154.9
+1632.4	-548.2	-194.4
+1523.5	-147.0	-607.0
+1523.5	-515.0	-316.7
+1523.5	-114.0	-565.2
+1447.3	-114.0	-565.2
+1523.5	-114.7	-610.9
+1447.3	-97.6	-525.2"""
+FRsusPointsFromNico = """1681.6	204.5	-101.1
+1432.4	204.5	-108.8
+1540.1	588.2	-100.9
+1670.6	257.8	-231.9
+1428.6	257.8	-210.1
+1523.5	540.8	-291.0
+1638.3	213.7	-154.9
+1632.4	548.2	-194.4
+1523.5	147.0	-607.0
+1523.5	515.0	-316.7
+1523.5	114.0	-565.2
+1447.3	114.0	-565.2
+1523.5	114.7	-610.9
+1447.3	97.6	-605.1"""
+RLsusPointsFromNico = """84.4	-200.7	-121.2
+-100.8	-200.7	-115.3
+-7.4	-594.4	-101.0
+89.2	-274.3	-221.8
+-96.7	-274.3	-238.4
+-20.9	-539.1	-293.5
+102.9	-295.4	-187.2
+105.0	-575.0	-203.2
+-20.9	-189.8	-489.6
+-20.9	-511.2	-314.1
+36.2	-165.5	-445.0
+-20.9	-165.5	-445.0
+-20.9	-165.5	-494.5
+36.2	-153.5	-402.2"""
+RRsusPointsFromNico = """84.4	200.7	-121.2
+-100.8	200.7	-115.3
+-7.4	594.4	-101.0
+89.2	274.3	-221.8
+-96.7	274.3	-238.4
+-20.9	539.1	-293.5
+102.9	295.4	-187.2
+105.0	575.0	-203.2
+-20.9	189.8	-489.6
+-20.9	511.2	-314.1
+36.2	165.5	-445.0
+-20.9	165.5	-445.0
+-20.9	165.5	-494.5
+36.2	153.5	-487.8"""
+def parse_sus_points(data:str)->SusPoints:
+    lines = data.strip().splitlines()
+    points = [tuple(float(coord.replace(',',''))/1000 for coord in line.split()) for line in lines]
+    return SusPoints(*points)
+flSus = parse_sus_points(FLsusPointsFromNico)
+frSus = parse_sus_points(FRsusPointsFromNico)
+rlSus = parse_sus_points(RLsusPointsFromNico)
+rrSus = parse_sus_points(RRsusPointsFromNico)
+masterSus = MasterSusPoints(FL=flSus, FR=frSus, RL=rlSus, RR=rrSus, name="Nico Sus Points")
+LLTD_range = np.linspace(0.4,0.55,10) # CHANGE ME FIDDLE MY NUMBERS [kinky?]
+bump_range = np.linspace(0,2000,2)
+props = CarProps(
+    wheelbase=1.54, 
+    trackwidth=1.27, 
+    cg_height=0.3175, 
+    cp_height = 0.96,
+    mass=295,
+    aero_load=3200,
+    fwb=0.45,
+    aero_fwb=0.42,
+    drag_force=387.3,
+    gear_ratio=11.2,
+    max_amk_torque=21,
+    tire_radius=0.2,
+    LLTD=0.5,
+    bump_amount=2000,
+    bump_moment_arm_outward=0)
+my_ellipse = tire_ellipse(1.8,-1.8,2.5,150)
+# create a data panda
+big_sweep = pd.DataFrame(
+    columns=[
+        "a_x","a_y","LLTD","bump",
+        "FL_Low_Fore","FL_Low_Aft","FL_Up_Fore","FL_Up_Aft","FL_Tie","FL_Push",
+        "FR_Low_Fore","FR_Low_Aft","FR_Up_Fore","FR_Up_Aft","FR_Tie","FR_Push",
+        "RL_Low_Fore","RL_Low_Aft","RL_Up_Fore","RL_Up_Aft","RL_Toe","RL_Push",
+        "RR_Low_Fore","RR_Low_Aft","RR_Up_Fore","RR_Up_Aft","RR_Toe","RR_Push",
+        "FL_Fx","FL_Fy","FL_Fz",
+        "FR_Fx","FR_Fy","FR_Fz",
+        "RL_Fx","RL_Fy","RL_Fz",
+        "RR_Fx","RR_Fy","RR_Fz"
+    ]
+)
+for lltd in LLTD_range:
+    for bump in bump_range:
+        props.LLTD = lltd
+        props.bump = bump
+        sweep_point = real_sweep_tire_ellipse(my_ellipse,masterSus,props)
+        for car in sweep_point:
+            fl_link_load,fr_link_load,rl_link_load,rr_link_load = get_link_loads_from_car(car)
+            row = {
+                "a_x":car.masterCP.a_x,
+                "a_y":car.masterCP.a_y,
+                "LLTD":lltd,
+                "bump":bump,
+                "FL_Low_Fore":fl_link_load[0],
+                "FL_Low_Aft":fl_link_load[1],
+                "FL_Up_Fore":fl_link_load[2],
+                "FL_Up_Aft":fl_link_load[3],
+                "FL_Tie":fl_link_load[4],
+                "FL_Push":fl_link_load[5],
+                "FR_Low_Fore":fr_link_load[0],
+                "FR_Low_Aft":fr_link_load[1],
+                "FR_Up_Fore":fr_link_load[2],
+                "FR_Up_Aft":fr_link_load[3],
+                "FR_Tie":fr_link_load[4],
+                "FR_Push":fr_link_load[5],
+                "RL_Low_Fore":rl_link_load[0],
+                "RL_Low_Aft":rl_link_load[1],
+                "RL_Up_Fore":rl_link_load[2],
+                "RL_Up_Aft":rl_link_load[3],
+                "RL_Toe":rl_link_load[4],
+                "RL_Push":rl_link_load[5],
+                "RR_Low_Fore":rr_link_load[0],
+                "RR_Low_Aft":rr_link_load[1],
+                "RR_Up_Fore":rr_link_load[2],
+                "RR_Up_Aft":rr_link_load[3],
+                "RR_Toe":rr_link_load[4],
+                "RR_Push":rr_link_load[5],
+                "FL_Fx":car.flCP.contact_patch_forces[0],
+                "FL_Fy":car.flCP.contact_patch_forces[1],
+                "FL_Fz":car.flCP.contact_patch_forces[2],
+                "FR_Fx":car.frCP.contact_patch_forces[0],
+                "FR_Fy":car.frCP.contact_patch_forces[1],
+                "FR_Fz":car.frCP.contact_patch_forces[2],
+                "RL_Fx":car.rlCP.contact_patch_forces[0],
+                "RL_Fy":car.rlCP.contact_patch_forces[1],
+                "RL_Fz":car.rlCP.contact_patch_forces[2],
+                "RR_Fx":car.rrCP.contact_patch_forces[0],
+                "RR_Fy":car.rrCP.contact_patch_forces[1],
+                "RR_Fz":car.rrCP.contact_patch_forces[2]
+            }
+            big_sweep = pd.concat([big_sweep,pd.DataFrame([row])],ignore_index=True)
+big_sweep.to_csv('big_sweep_link_loads.csv',index=False)
+front_tension = [
+    max(big_sweep['FL_Low_Fore'].max(),big_sweep['FR_Low_Fore'].max()),
+    max(big_sweep['FL_Low_Aft'].max(),big_sweep['FR_Low_Aft'].max()),
+    max(big_sweep['FL_Up_Fore'].max(),big_sweep['FR_Up_Fore'].max()),
+    max(big_sweep['FL_Up_Aft'].max(),big_sweep['FR_Up_Aft'].max()),
+    max(big_sweep['FL_Tie'].max(),big_sweep['FR_Tie'].max()),
+    max(big_sweep['FL_Push'].max(),big_sweep['FR_Push'].max())
+]
+rear_tension = [
+    max(big_sweep['RL_Low_Fore'].max(),big_sweep['RR_Low_Fore'].max()),
+    max(big_sweep['RL_Low_Aft'].max(),big_sweep['RR_Low_Aft'].max()),
+    max(big_sweep['RL_Up_Fore'].max(),big_sweep['RR_Up_Fore'].max()),
+    max(big_sweep['RL_Up_Aft'].max(),big_sweep['RR_Up_Aft'].max()),
+    max(big_sweep['RL_Toe'].max(),big_sweep['RR_Toe'].max()),
+    max(big_sweep['RL_Push'].max(),big_sweep['RR_Push'].max())
+]
+front_compression = [
+    min(big_sweep['FL_Low_Fore'].min(),big_sweep['FR_Low_Fore'].min()),
+    min(big_sweep['FL_Low_Aft'].min(),big_sweep['FR_Low_Aft'].min()),
+    min(big_sweep['FL_Up_Fore'].min(),big_sweep['FR_Up_Fore'].min()),
+    min(big_sweep['FL_Up_Aft'].min(),big_sweep['FR_Up_Aft'].min()),
+    min(big_sweep['FL_Tie'].min(),big_sweep['FR_Tie'].min()),
+    min(big_sweep['FL_Push'].min(),big_sweep['FR_Push'].min())
+]
+rear_compression = [
+    min(big_sweep['RL_Low_Fore'].min(),big_sweep['RR_Low_Fore'].min()),
+    min(big_sweep['RL_Low_Aft'].min(),big_sweep['RR_Low_Aft'].min()),
+    min(big_sweep['RL_Up_Fore'].min(),big_sweep['RR_Up_Fore'].min()),
+    min(big_sweep['RL_Up_Aft'].min(),big_sweep['RR_Up_Aft'].min()),
+    min(big_sweep['RL_Toe'].min(),big_sweep['RR_Toe'].min()),
+    min(big_sweep['RL_Push'].min(),big_sweep['RR_Push'].min())
+]
+front_tension = [round(val/1000,1) for val in front_tension]
+rear_tension = [round(val/1000,1) for val in rear_tension]
+front_compression = [round(val/1000,1) for val in front_compression]
+rear_compression = [round(val/1000,1) for val in rear_compression]
+link_extremes = pd.DataFrame({
+    "Link":["Low Fore","Low Aft","Up Fore","Up Aft","Tie","Push"],
+    "Front Max Tension (kN)":front_tension,
+    "Front Max Compression (kN)":front_compression,
+    "Rear Max Tension (kN)":rear_tension,
+    "Rear Max Compression (kN)":rear_compression
+})
+link_extremes.to_csv('link_load_extremes.csv',index=False)
