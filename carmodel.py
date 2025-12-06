@@ -4,8 +4,9 @@ from dataclasses import dataclass
 from typing import Optional
 from prettytable import PrettyTable
 import pandas as pd
-import csv
-import os
+from openpyxl import load_workbook
+from openpyxl.styles import Font, Border, Side
+from openpyxl.utils.dataframe import dataframe_to_rows
 np.set_printoptions(legacy='1.25')
 
 # bump is applied vertically 
@@ -120,9 +121,9 @@ class MasterContactPatch:
 
         N_fl,N_fr,N_rl,N_rr = self._normal_solver(a_x,a_y,LLTD)
         N_total = N_fl + N_fr + N_rl + N_rr
-        forces = [np.array([a_x*m*N/N_total,a_y*m*N/N_total,-N]) for N in [N_fl,N_fr,N_rl,N_rr]]
-        bump_moment_arm_RH = np.array([props.bump_moment_arm_outward,0,0])
-        bump_moment_arm_LH = np.array([-props.bump_moment_arm_outward,0,0])
+        forces = [np.array([a_x*m*N/N_total,a_y*m*N/N_total,-N+props.bump_amount]) for N in [N_fl,N_fr,N_rl,N_rr]]
+        bump_moment_arm_RH = np.array([0,props.bump_moment_arm_outward,0])
+        bump_moment_arm_LH = np.array([0,-props.bump_moment_arm_outward,0])
         bump_force = np.array([0,0,props.bump_amount])
         RH_bump = np.cross(bump_moment_arm_RH,bump_force)
         LH_bump = np.cross(bump_moment_arm_LH,bump_force)
@@ -165,10 +166,10 @@ class MasterContactPatch:
         # in the positive case, left tire has more load than right
         LLT_f = LLT * LLTD
         LLT_r = LLT * (1 - LLTD)
-        N_fl = max(N_front / 2 - LLT_f / 2,0)+self.props.bump
-        N_fr = max(N_front / 2 + LLT_f / 2,0)+self.props.bump
-        N_rl = max(N_rear / 2 - LLT_r / 2,0)+self.props.bump
-        N_rr = max(N_rear / 2 + LLT_r / 2,0)+self.props.bump
+        N_fl = max(N_front / 2 - LLT_f / 2,0)
+        N_fr = max(N_front / 2 + LLT_f / 2,0)
+        N_rl = max(N_rear / 2 - LLT_r / 2,0)
+        N_rr = max(N_rear / 2 + LLT_r / 2,0)
         return N_fl,N_fr,N_rl,N_rr
 class Car:
     '''Quite a big class. Contains all four sus points, properties, and a given acceleratrion. From the acceleration and properties, it constructs a MasterContactPatch, and for each of these contact patches and corresponding sus points, it constructs a Corner object which calculates link loads. Succintish way to go from car + sus + accel to link loads. Hoozah.'''
@@ -289,6 +290,8 @@ def get_corner_compressive_extremes(minlinkload_dict):
     rl_min = get_maxmin_linkload(rl_corner_dict,"compression")
     rr_min = get_maxmin_linkload(rr_corner_dict,"compression")
     return [fl_min,fr_min,rl_min,rr_min]
+def get_max_thing(name,dataframe):
+    return dataframe.loc[dataframe[name].abs().idxmax()][name]
 FLsusPointsFromNico = """1681.6	-204.5	-101.1
 1432.4	-204.5	-108.8
 1540.1	-588.2	-100.9
@@ -354,8 +357,7 @@ frSus = parse_sus_points(FRsusPointsFromNico)
 rlSus = parse_sus_points(RLsusPointsFromNico)
 rrSus = parse_sus_points(RRsusPointsFromNico)
 masterSus = MasterSusPoints(FL=flSus, FR=frSus, RL=rlSus, RR=rrSus, name="Nico Sus Points")
-LLTD_range = np.linspace(0.4,0.55,10) # CHANGE ME FIDDLE MY NUMBERS [kinky?]
-bump_range = np.linspace(0,2000,2)
+
 props = CarProps(
     wheelbase=1.54, 
     trackwidth=1.27, 
@@ -370,10 +372,56 @@ props = CarProps(
     max_amk_torque=21,
     tire_radius=0.2,
     LLTD=0.5,
-    bump_amount=2000,
+    bump_amount=0,
     bump_moment_arm_outward=0)
-my_ellipse = tire_ellipse(1.8,-1.8,2.5,150)
-# create a data panda
+### PROPERTIES. HELLO. CHANGE THESE. ###
+max_accel_g = 1.8
+max_braking_g = -1.8
+max_lateral_g = 2.3
+num_ellipse_points=48
+pushrod_points = 24
+min_LLTD = 0.4
+max_LLTD = 0.55
+LLTD_points = 5
+max_bump = -2000 #N
+bump_amt_points= 2
+bump_location_inch = 3
+bump_location_points = 5
+### END PROPERTIES. BYE. ###
+sim_property_dp = pd.DataFrame([
+    {
+        "accel (g)":max_accel_g,
+        "braking (g)":max_braking_g,
+        "lateral (g)":max_lateral_g,
+        "LLTD min":min_LLTD,
+        "LLTD max":max_LLTD,
+        "bump (N)":max_bump,
+        "bump arm (inches outboard)":bump_location_inch
+    }
+])
+car_property_dp = pd.DataFrame([
+    {
+        "wheelbase (m)":props.wheelbase,
+        "trackwidth (m)":props.trackwidth,
+        "cg_height (m)":props.cg_height,
+        "cp_height (m)":props.cp_height,
+        "mass (kg)":props.mass,
+        "aero_load (N)":props.aero_load,
+        "fwb":props.fwb,
+        "aero_fwb":props.aero_fwb,
+        "drag_force (N)":props.drag_force,
+        "gear_ratio":props.gear_ratio,
+        "max_amk_torque (Nm)":props.max_amk_torque,
+        "tire_radius (m)":props.tire_radius
+    }])
+
+my_ellipse = tire_ellipse(max_accel_g,max_braking_g,max_lateral_g,num_ellipse_points)
+pushpoint_ellipse = tire_ellipse(max_accel_g,max_braking_g,max_lateral_g,pushrod_points)
+LLTD_range = np.linspace(min_LLTD,max_LLTD,LLTD_points)
+bump_range = np.linspace(0,max_bump,bump_amt_points)
+bump_location_range = np.linspace(0,bump_location_inch*0.0254,bump_location_points) # assumption! we are not hitting cone left of centerline of CP
+
+### call me BROOM the way i sweep ###
 big_sweep = pd.DataFrame(
     columns=[
         "a_x","a_y","LLTD","bump",
@@ -381,63 +429,148 @@ big_sweep = pd.DataFrame(
         "FR_Low_Fore","FR_Low_Aft","FR_Up_Fore","FR_Up_Aft","FR_Tie","FR_Push",
         "RL_Low_Fore","RL_Low_Aft","RL_Up_Fore","RL_Up_Aft","RL_Toe","RL_Push",
         "RR_Low_Fore","RR_Low_Aft","RR_Up_Fore","RR_Up_Aft","RR_Toe","RR_Push",
-        "FL_Fx","FL_Fy","FL_Fz",
-        "FR_Fx","FR_Fy","FR_Fz",
-        "RL_Fx","RL_Fy","RL_Fz",
-        "RR_Fx","RR_Fy","RR_Fz"
+        "FL_Fx","FL_Fy","FL_Fz","FL_Mx","FL_My","FL_Mz",
+        "FR_Fx","FR_Fy","FR_Fz","FR_Mx","FR_My","FR_Mz",
+        "RL_Fx","RL_Fy","RL_Fz","RL_Mx","RL_My","RL_Mz",
+        "RR_Fx","RR_Fy","RR_Fz","RR_Mx","RR_My","RR_Mz"
+    ]
+)
+push_sweep = pd.DataFrame(
+    columns = [
+        "a_x","a_y","FR_Push","RR_Push"
     ]
 )
 for lltd in LLTD_range:
     for bump in bump_range:
-        props.LLTD = lltd
-        props.bump = bump
-        sweep_point = real_sweep_tire_ellipse(my_ellipse,masterSus,props)
-        for car in sweep_point:
-            fl_link_load,fr_link_load,rl_link_load,rr_link_load = get_link_loads_from_car(car)
-            row = {
-                "a_x":car.masterCP.a_x,
-                "a_y":car.masterCP.a_y,
-                "LLTD":lltd,
-                "bump":bump,
-                "FL_Low_Fore":fl_link_load[0],
-                "FL_Low_Aft":fl_link_load[1],
-                "FL_Up_Fore":fl_link_load[2],
-                "FL_Up_Aft":fl_link_load[3],
-                "FL_Tie":fl_link_load[4],
-                "FL_Push":fl_link_load[5],
-                "FR_Low_Fore":fr_link_load[0],
-                "FR_Low_Aft":fr_link_load[1],
-                "FR_Up_Fore":fr_link_load[2],
-                "FR_Up_Aft":fr_link_load[3],
-                "FR_Tie":fr_link_load[4],
-                "FR_Push":fr_link_load[5],
-                "RL_Low_Fore":rl_link_load[0],
-                "RL_Low_Aft":rl_link_load[1],
-                "RL_Up_Fore":rl_link_load[2],
-                "RL_Up_Aft":rl_link_load[3],
-                "RL_Toe":rl_link_load[4],
-                "RL_Push":rl_link_load[5],
-                "RR_Low_Fore":rr_link_load[0],
-                "RR_Low_Aft":rr_link_load[1],
-                "RR_Up_Fore":rr_link_load[2],
-                "RR_Up_Aft":rr_link_load[3],
-                "RR_Toe":rr_link_load[4],
-                "RR_Push":rr_link_load[5],
-                "FL_Fx":car.flCP.contact_patch_forces[0],
-                "FL_Fy":car.flCP.contact_patch_forces[1],
-                "FL_Fz":car.flCP.contact_patch_forces[2],
-                "FR_Fx":car.frCP.contact_patch_forces[0],
-                "FR_Fy":car.frCP.contact_patch_forces[1],
-                "FR_Fz":car.frCP.contact_patch_forces[2],
-                "RL_Fx":car.rlCP.contact_patch_forces[0],
-                "RL_Fy":car.rlCP.contact_patch_forces[1],
-                "RL_Fz":car.rlCP.contact_patch_forces[2],
-                "RR_Fx":car.rrCP.contact_patch_forces[0],
-                "RR_Fy":car.rrCP.contact_patch_forces[1],
-                "RR_Fz":car.rrCP.contact_patch_forces[2]
-            }
-            big_sweep = pd.concat([big_sweep,pd.DataFrame([row])],ignore_index=True)
-big_sweep.to_csv('big_sweep_link_loads.csv',index=False)
+        for bump_location in bump_location_range:
+            props.bump_moment_arm_outward = bump_location
+            props.LLTD = lltd
+            props.bump_amount = bump
+            sweep_point = real_sweep_tire_ellipse(my_ellipse,masterSus,props)
+            push_sweep_point = real_sweep_tire_ellipse(pushpoint_ellipse,masterSus,props)
+            for car in sweep_point:
+                fl_link_load,fr_link_load,rl_link_load,rr_link_load = get_link_loads_from_car(car)
+                row = {
+                    "a_x":car.masterCP.a_x,
+                    "a_y":car.masterCP.a_y,
+                    "LLTD":lltd,
+                    "bump":bump,
+                    "FL_Low_Fore":fl_link_load[0],
+                    "FL_Low_Aft":fl_link_load[1],
+                    "FL_Up_Fore":fl_link_load[2],
+                    "FL_Up_Aft":fl_link_load[3],
+                    "FL_Tie":fl_link_load[4],
+                    "FL_Push":fl_link_load[5],
+                    "FR_Low_Fore":fr_link_load[0],
+                    "FR_Low_Aft":fr_link_load[1],
+                    "FR_Up_Fore":fr_link_load[2],
+                    "FR_Up_Aft":fr_link_load[3],
+                    "FR_Tie":fr_link_load[4],
+                    "FR_Push":fr_link_load[5],
+                    "RL_Low_Fore":rl_link_load[0],
+                    "RL_Low_Aft":rl_link_load[1],
+                    "RL_Up_Fore":rl_link_load[2],
+                    "RL_Up_Aft":rl_link_load[3],
+                    "RL_Toe":rl_link_load[4],
+                    "RL_Push":rl_link_load[5],
+                    "RR_Low_Fore":rr_link_load[0],
+                    "RR_Low_Aft":rr_link_load[1],
+                    "RR_Up_Fore":rr_link_load[2],
+                    "RR_Up_Aft":rr_link_load[3],
+                    "RR_Toe":rr_link_load[4],
+                    "RR_Push":rr_link_load[5],
+                    "FL_Fx":car.flCP.contact_patch_forces[0],
+                    "FL_Fy":car.flCP.contact_patch_forces[1],
+                    "FL_Fz":car.flCP.contact_patch_forces[2],
+                    "FL_Mx":car.flCP.contact_patch_moments[0],
+                    "FL_My":car.flCP.contact_patch_moments[1],
+                    "FL_Mz":car.flCP.contact_patch_moments[2],
+                    "FR_Fx":car.frCP.contact_patch_forces[0],
+                    "FR_Fy":car.frCP.contact_patch_forces[1],
+                    "FR_Fz":car.frCP.contact_patch_forces[2],
+                    "FR_Mx":car.frCP.contact_patch_moments[0],
+                    "FR_My":car.frCP.contact_patch_moments[1],
+                    "FR_Mz":car.frCP.contact_patch_moments[2],
+                    "RL_Fx":car.rlCP.contact_patch_forces[0],
+                    "RL_Fy":car.rlCP.contact_patch_forces[1],
+                    "RL_Fz":car.rlCP.contact_patch_forces[2],
+                    "RL_Mx":car.rlCP.contact_patch_moments[0],
+                    "RL_My":car.rlCP.contact_patch_moments[1],
+                    "RL_Mz":car.rlCP.contact_patch_moments[2],
+                    "RR_Fx":car.rrCP.contact_patch_forces[0],
+                    "RR_Fy":car.rrCP.contact_patch_forces[1],
+                    "RR_Fz":car.rrCP.contact_patch_forces[2],
+                    "RR_Mx":car.rrCP.contact_patch_moments[0],
+                    "RR_My":car.rrCP.contact_patch_moments[1],
+                    "RR_Mz":car.rrCP.contact_patch_moments[2],
+                }
+                big_sweep = pd.concat([big_sweep,pd.DataFrame([row])],ignore_index=True)
+            for car in push_sweep_point:
+                fl_link_load,fr_link_load,rl_link_load,rr_link_load = get_link_loads_from_car(car)
+                push_row = {
+                    "a_x":car.masterCP.a_x,
+                    "a_y":car.masterCP.a_y,
+                    "FL_Push":fl_link_load[5],
+                    "FR_Push":fr_link_load[5],
+                    "RL_Push":rl_link_load[5],
+                    "RR_Push":rr_link_load[5]
+                }
+                push_sweep = pd.concat([push_sweep,pd.DataFrame([push_row])],ignore_index=True)
+# Shinyoung Kang
+shinyoung = pd.DataFrame()
+for ax,ay in pushpoint_ellipse:
+    ellipse_point_df = push_sweep[(push_sweep['a_x']==ax) & (push_sweep['a_y']==ay)]
+    max_FR_Push = get_max_thing("FR_Push",ellipse_point_df)
+    max_RR_Push = get_max_thing("RR_Push",ellipse_point_df)
+    max_FL_Push = get_max_thing("FL_Push",ellipse_point_df)
+    max_RL_Push = get_max_thing("RL_Push",ellipse_point_df)
+    row = {
+        "a_x":ax,
+        "a_y":ay,
+        "FL Push":max_FL_Push,
+        "FR Push":max_FR_Push,
+        "RL Push":max_RL_Push,
+        "RR Push":max_RR_Push,
+    }
+    shinyoung = pd.concat([shinyoung,pd.DataFrame([row])],ignore_index=True)
+# for each ellipse point, get highest magnitude Fx,Fy,Fz Mx,My,Mz on right side
+distilled_sweep = pd.DataFrame()
+for col in ["a_x","a_y", "FR_Fx","FR_Fy","FR_Fz","FR_Mx","FR_My","FR_Mz",
+            "RR_Fx","RR_Fy","RR_Fz","RR_Mx","RR_My","RR_Mz"]:
+    distilled_sweep[col] = big_sweep[col]
+max_patch = pd.DataFrame()
+for ax,ay in my_ellipse:
+    ellipse_point_df = distilled_sweep[(distilled_sweep['a_x']==ax) & (distilled_sweep['a_y']==ay)]
+    max_FR_Fx = get_max_thing("FR_Fx",ellipse_point_df)
+    max_FR_Fy = get_max_thing("FR_Fy",ellipse_point_df)
+    max_FR_Fz = get_max_thing("FR_Fz",ellipse_point_df)
+    max_FR_Mx = get_max_thing("FR_Mx",ellipse_point_df)
+    max_FR_My = get_max_thing("FR_My",ellipse_point_df)
+    max_FR_Mz = get_max_thing("FR_Mz",ellipse_point_df)
+    max_RR_Fx = get_max_thing("RR_Fx",ellipse_point_df)
+    max_RR_Fy = get_max_thing("RR_Fy",ellipse_point_df)
+    max_RR_Fz = get_max_thing("RR_Fz",ellipse_point_df)
+    max_RR_Mx = get_max_thing("RR_Mx",ellipse_point_df)
+    max_RR_My = get_max_thing("RR_My",ellipse_point_df)
+    max_RR_Mz = get_max_thing("RR_Mz",ellipse_point_df)
+    row = {
+        "a_x":ax,
+        "a_y":ay,
+        "FR Fx":max_FR_Fx,
+        "FR Fy":max_FR_Fy,
+        "FR Fz":max_FR_Fz,
+        "FR Mx":max_FR_Mx,
+        "FR My":max_FR_My,
+        "FR Mz":max_FR_Mz,
+        "RR Fx":max_RR_Fx,
+        "RR Fy":max_RR_Fy,
+        "RR Fz":max_RR_Fz,
+        "RR Mx":max_RR_Mx,
+        "RR My":max_RR_My,
+        "RR Mz":max_RR_Mz
+    }
+    max_patch = pd.concat([max_patch,pd.DataFrame([row])],ignore_index=True)
+# Link Extremes
 front_tension = [
     max(big_sweep['FL_Low_Fore'].max(),big_sweep['FR_Low_Fore'].max()),
     max(big_sweep['FL_Low_Aft'].max(),big_sweep['FR_Low_Aft'].max()),
@@ -470,15 +603,56 @@ rear_compression = [
     min(big_sweep['RL_Toe'].min(),big_sweep['RR_Toe'].min()),
     min(big_sweep['RL_Push'].min(),big_sweep['RR_Push'].min())
 ]
-front_tension = [round(val/1000,1) for val in front_tension]
-rear_tension = [round(val/1000,1) for val in rear_tension]
-front_compression = [round(val/1000,1) for val in front_compression]
-rear_compression = [round(val/1000,1) for val in rear_compression]
+front_tension = [round(val,1) for val in front_tension]
+rear_tension = [round(val,1) for val in rear_tension]
+front_compression = [round(val,1) for val in front_compression]
+rear_compression = [round(val,1) for val in rear_compression]
 link_extremes = pd.DataFrame({
     "Link":["Low Fore","Low Aft","Up Fore","Up Aft","Tie","Push"],
-    "Front Max Tension (kN)":front_tension,
-    "Front Max Compression (kN)":front_compression,
-    "Rear Max Tension (kN)":rear_tension,
-    "Rear Max Compression (kN)":rear_compression
+    "Front Max Tension (N)":front_tension,
+    "Front Max Compression (N)":front_compression,
+    "Rear Max Tension (N)":rear_tension,
+    "Rear Max Compression (N)":rear_compression
 })
-link_extremes.to_csv('link_load_extremes.csv',index=False)
+time = pd.Timestamp.now().strftime("%Y%m%d_%H%M%S")
+sheet_name = f"pebble_master_{time}.xlsx"
+with pd.ExcelWriter(sheet_name, engine="openpyxl") as writer:
+    big_sweep.to_excel(writer, sheet_name="Master", index=False)
+    sim_property_dp.to_excel(writer, sheet_name="Sim_Inputs", index=False)
+    car_property_dp.to_excel(writer, sheet_name="Car_Properties", index=False)
+    link_extremes.to_excel(writer, sheet_name="Link_Extremes", index=False)
+    max_patch.to_excel(writer, sheet_name="Max_Contact_Patch", index=False)
+    shinyoung.to_excel(writer, sheet_name="Pushrod_Sweep", index=False)
+wb = load_workbook(sheet_name)
+#process Master
+ws_master = wb["Master"]
+for cell in ws_master[1]:
+    cell.font = Font(bold=True)
+#process Inputs
+ws_sim = wb["Sim_Inputs"]
+ws_carprops = wb["Car_Properties"]
+ws_input = wb.create_sheet("Inputs")
+for r_idx, row in enumerate(dataframe_to_rows(sim_property_dp, index=False, header=True), start=1):
+    for c_idx,value in enumerate(row, start=1):
+        ws_input.cell(row=c_idx, column=r_idx, value=value)
+car_prop_start_col = ws_input.max_column + 2
+for r_idx, row in enumerate(dataframe_to_rows(car_property_dp, index=False, header=True), start=car_prop_start_col):
+    for c_idx, value in enumerate(row, start=1):
+        ws_input.cell(row=c_idx, column=r_idx, value=value)
+#Process Link Extremes
+ws_link_extremes = wb["Link_Extremes"]
+for cell in ws_link_extremes[1]:
+    cell.font = Font(bold=True)
+#process pushrod things
+ws_pushrod = wb["Pushrod_Sweep"]
+for cell in ws_pushrod[1]:
+    cell.font = Font(bold=True)
+#Max Patch
+ws_max_patch = wb["Max_Contact_Patch"]
+for cell in ws_max_patch[1]:
+    cell.font = Font(bold=True)
+
+del wb["Sim_Inputs"]
+del wb["Car_Properties"]
+
+wb.save(sheet_name)
