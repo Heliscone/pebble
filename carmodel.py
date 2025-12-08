@@ -2,10 +2,10 @@ import numpy as np
 import matplotlib.pyplot as plt
 from dataclasses import dataclass
 from typing import Optional
-from prettytable import PrettyTable
 import pandas as pd
 from openpyxl import load_workbook
-from openpyxl.styles import Font, Border, Side
+from openpyxl.styles import Font, Border, Side, Alignment
+from openpyxl.utils import get_column_letter
 from openpyxl.utils.dataframe import dataframe_to_rows
 np.set_printoptions(legacy='1.25')
 
@@ -87,6 +87,7 @@ class Corner:
         link_loads_to_cp_loads = np.vstack((f_hats.T, moment_multipliers.T)) # 6x6 matrix transforming link loads to contact patch loads
         cp_loads_to_link_loads = -1*np.linalg.inv(link_loads_to_cp_loads)
         # We multiply by -1 because cp.combined_load gives the loads on the wheel, so link_to_cp @ link_loads + cp.combined_load = 0, whence link_loads = -cp_to_link @ cp.combined_load
+        # print(cp_loads_to_link_loads)
         return cp_loads_to_link_loads
 @dataclass
 class CarProps:
@@ -120,8 +121,9 @@ class MasterContactPatch:
         LLTD = self.props.LLTD #fraction of lateral load transfer borne by front axle.
 
         N_fl,N_fr,N_rl,N_rr = self._normal_solver(a_x,a_y,LLTD)
-        N_total = N_fl + N_fr + N_rl + N_rr
-        forces = [np.array([a_x*m*N/N_total,a_y*m*N/N_total,-N+props.bump_amount]) for N in [N_fl,N_fr,N_rl,N_rr]]
+        N_total = m*g + props.aero_load
+        max_Fx = props.max_amk_torque*props.gear_ratio/(props.tire_radius)
+        forces = [np.array([min((a_x*m+props.drag_force)*N/N_total,max_Fx),a_y*m*N/N_total,-N+props.bump_amount]) for N in [N_fl,N_fr,N_rl,N_rr]]
         bump_moment_arm_RH = np.array([0,props.bump_moment_arm_outward,0])
         bump_moment_arm_LH = np.array([0,-props.bump_moment_arm_outward,0])
         bump_force = np.array([0,0,props.bump_amount])
@@ -146,30 +148,32 @@ class MasterContactPatch:
         aero_fwb = self.props.aero_fwb
         drag = self.props.drag_force
         h_cp = self.props.cp_height
+        h_cg = self.props.cg_height
         wheelbase = self.props.wheelbase
         trackwidth = self.props.trackwidth
+        # in these calcs, normals point up
         # F/B balance via bicycle model:
         #   Z axis force balance:
         #       N_f+N_r = m*g + aero
         #   Rear contact patch moment balance:
-        #       N_f*wheelbase = m*g*wheelbase*fwb + aero*wheelbase*aero_fwb - drag*h_cp - m*a_x*h_cp
-        N_front = (m * g * wheelbase * fwb + aero * wheelbase * aero_fwb - drag * h_cp - m * a_x * h_cp) / wheelbase
+        #       N_f*wheelbase = m*g*wheelbase*fwb + aero*wheelbase*aero_fwb - drag*h_cp - m*a_x*h_cg
+        N_front = (m * g * wheelbase * fwb + aero * wheelbase * aero_fwb - drag * h_cp - m * a_x * h_cg) / wheelbase
         N_rear = m*g + aero - N_front
         # L/R balance:
         #   Total lateral load transfer:
         #       N_l + N_r = m*g+aero
         #   Moment about left contact patch:
-        #       N_r*trackwidth = m*a_y*h_cp + aero*trackwidth/2 + m*g*trackwidth/2
-        N_r = (m*a_y*h_cp + (m*g + aero)*trackwidth/2)/trackwidth
+        #       N_r*trackwidth = -m*a_y*h_cg + aero*trackwidth/2 + m*g*trackwidth/2
+        N_r = (-m*a_y*h_cg + (m*g + aero)*trackwidth/2)/trackwidth
         N_l = m * g + aero - N_r
-        LLT = N_l - N_r
+        LLT = (N_l - N_r)
         # in the positive case, left tire has more load than right
         LLT_f = LLT * LLTD
         LLT_r = LLT * (1 - LLTD)
-        N_fl = max(N_front / 2 - LLT_f / 2,0)
-        N_fr = max(N_front / 2 + LLT_f / 2,0)
-        N_rl = max(N_rear / 2 - LLT_r / 2,0)
-        N_rr = max(N_rear / 2 + LLT_r / 2,0)
+        N_fl = max((N_front + LLT_f) / 2,0)
+        N_fr = max((N_front - LLT_f) / 2,0)
+        N_rl = max((N_rear + LLT_r) / 2,0)
+        N_rr = max((N_rear - LLT_r) / 2,0)
         return N_fl,N_fr,N_rl,N_rr
 class Car:
     '''Quite a big class. Contains all four sus points, properties, and a given acceleratrion. From the acceleration and properties, it constructs a MasterContactPatch, and for each of these contact patches and corresponding sus points, it constructs a Corner object which calculates link loads. Succintish way to go from car + sus + accel to link loads. Hoozah.'''
@@ -196,10 +200,10 @@ def tire_ellipse(max_accel_g,max_braking_g,max_lateral_g,num_points):
     max_accel = max_accel_g * g
     max_braking = max_braking_g * g
     max_lateral = max_lateral_g * g
-    angles = np.linspace(0,2*np.pi,num_points)
+    angles = np.linspace(0,2*np.pi,num_points,endpoint=False)
     a_x_points = abs(max_braking) * np.sin(angles)
     a_y_points = max_lateral * np.cos(angles)
-    ellipse_points = [(min(a_x,max_accel),a_y) for a_x,a_y in zip(a_x_points,a_y_points)]
+    ellipse_points = [(a_x,a_y) for a_x,a_y in zip(a_x_points,a_y_points)]
     return ellipse_points
 def analyze_link_loads(fl_link_loads,fr_link_loads,rl_link_loads,rr_link_loads):
     '''Return max and min link loads for each corner given time-indexed link loads lists.'''
@@ -292,6 +296,7 @@ def get_corner_compressive_extremes(minlinkload_dict):
     return [fl_min,fr_min,rl_min,rr_min]
 def get_max_thing(name,dataframe):
     return dataframe.loc[dataframe[name].abs().idxmax()][name]
+
 FLsusPointsFromNico = """1681.6	-204.5	-101.1
 1432.4	-204.5	-108.8
 1540.1	-588.2	-100.9
@@ -361,30 +366,30 @@ masterSus = MasterSusPoints(FL=flSus, FR=frSus, RL=rlSus, RR=rrSus, name="Nico S
 props = CarProps(
     wheelbase=1.54, 
     trackwidth=1.27, 
-    cg_height=0.3175, 
+    cg_height=0.2921, 
     cp_height = 0.96,
     mass=295,
-    aero_load=3200,
+    aero_load=1866,
     fwb=0.45,
     aero_fwb=0.42,
-    drag_force=387.3,
-    gear_ratio=11.2,
+    drag_force=823.3,
+    gear_ratio=10.5,
     max_amk_torque=21,
-    tire_radius=0.2,
+    tire_radius=0.2032,
     LLTD=0.5,
     bump_amount=0,
     bump_moment_arm_outward=0)
 ### PROPERTIES. HELLO. CHANGE THESE. ###
 max_accel_g = 1.8
 max_braking_g = -1.8
-max_lateral_g = 2.3
+max_lateral_g = 2.4
 num_ellipse_points=48
 pushrod_points = 24
 min_LLTD = 0.4
 max_LLTD = 0.55
 LLTD_points = 5
-max_bump = -2000 #N
-bump_amt_points= 2
+max_bump = -2000 #N, must be negative
+bump_amt_points= 3
 bump_location_inch = 3
 bump_location_points = 5
 ### END PROPERTIES. BYE. ###
@@ -440,12 +445,12 @@ push_sweep = pd.DataFrame(
         "a_x","a_y","FR_Push","RR_Push"
     ]
 )
-for lltd in LLTD_range:
-    for bump in bump_range:
+for bump in bump_range:
+    for lltd in LLTD_range:
         for bump_location in bump_location_range:
             props.bump_moment_arm_outward = bump_location
             props.LLTD = lltd
-            props.bump_amount = bump
+            props.bump_amount = max_bump
             sweep_point = real_sweep_tire_ellipse(my_ellipse,masterSus,props)
             push_sweep_point = real_sweep_tire_ellipse(pushpoint_ellipse,masterSus,props)
             for car in sweep_point:
@@ -516,6 +521,8 @@ for lltd in LLTD_range:
                     "RR_Push":rr_link_load[5]
                 }
                 push_sweep = pd.concat([push_sweep,pd.DataFrame([push_row])],ignore_index=True)
+            if bump==0:
+                break
 # Shinyoung Kang
 shinyoung = pd.DataFrame()
 for ax,ay in pushpoint_ellipse:
@@ -533,6 +540,13 @@ for ax,ay in pushpoint_ellipse:
         "RR Push":max_RR_Push,
     }
     shinyoung = pd.concat([shinyoung,pd.DataFrame([row])],ignore_index=True)
+signed_max = shinyoung.apply(
+    lambda col: col.loc[col.abs().idxmax()] if col.abs().notna().any() else pd.NA
+)
+shinyoung = pd.concat(
+    [signed_max.to_frame().T, shinyoung],
+    ignore_index=True
+)
 # for each ellipse point, get highest magnitude Fx,Fy,Fz Mx,My,Mz on right side
 distilled_sweep = pd.DataFrame()
 for col in ["a_x","a_y", "FR_Fx","FR_Fy","FR_Fz","FR_Mx","FR_My","FR_Mz",
@@ -570,6 +584,13 @@ for ax,ay in my_ellipse:
         "RR Mz":max_RR_Mz
     }
     max_patch = pd.concat([max_patch,pd.DataFrame([row])],ignore_index=True)
+signed_max = max_patch.apply(
+    lambda col: col.loc[col.abs().idxmax()] if col.abs().notna().any() else pd.NA
+)
+max_patch = pd.concat(
+    [signed_max.to_frame().T, max_patch],
+    ignore_index=True
+)
 # Link Extremes
 front_tension = [
     max(big_sweep['FL_Low_Fore'].max(),big_sweep['FR_Low_Fore'].max()),
@@ -626,9 +647,57 @@ with pd.ExcelWriter(sheet_name, engine="openpyxl") as writer:
 wb = load_workbook(sheet_name)
 #process Master
 ws_master = wb["Master"]
-for cell in ws_master[1]:
-    cell.font = Font(bold=True)
+num_rows = ws_master.max_row
+for row in ws_master["A2":f"B{num_rows}"]:
+    for cell in row:
+        cell.number_format = '0.00'
+for row in ws_master["C2":f"AZ{num_rows}"]:
+    for cell in row:
+        cell.number_format = '0'
+ws_master.move_range(
+    f"A1:{get_column_letter(ws_master.max_column)}{ws_master.max_row}",
+    rows=1,
+    cols=0
+)
+ws_master.merge_cells("E1:J1")
+ws_master["E1"] = "Front Left"
+ws_master.merge_cells("K1:P1")
+ws_master["K1"] = "Front Right"
+ws_master.merge_cells("Q1:V1")
+ws_master["Q1"] = "Rear Left"
+ws_master.merge_cells("W1:AB1")
+ws_master["W1"] = "Rear Right"
+links = ["Low Fore","Low Aft","Up Fore","Up Aft","Tie","Push"]
+for i,link in enumerate(links):
+    fl_col = get_column_letter(5 + i)
+    fr_col = get_column_letter(11 + i)
+    rl_col = get_column_letter(17 + i)
+    rr_col = get_column_letter(23 + i)
+    ws_master[f"{fl_col}2"] = f"{link}"
+    ws_master[f"{fr_col}2"] = f"{link}"
+    ws_master[f"{rl_col}2"] = f"{link}"
+    ws_master[f"{rr_col}2"] = f"{link}"
+ws_master.merge_cells("A1:A2")
+ws_master.merge_cells("B1:B2")
+ws_master.merge_cells("C1:C2")
+ws_master.merge_cells("D1:D2")
+ws_master["A1"] = "a_x (m/s²)"
+ws_master["B1"] = "a_y (m/s²)"
+ws_master["C1"] = "LLTD"
+ws_master["D1"] = "Bump (N)"
+for row in ws_master["A1":f"{get_column_letter(ws_master.max_column)}2"]:
+    for cell in row:
+        cell.alignment = Alignment(horizontal="center")
+        cell.font = Font(bold=True)
+        cell.border = Border(
+            left=Side(border_style="thin", color="000000"),
+            right=Side(border_style="thin", color="000000"),
+            top=Side(border_style="thin", color="000000"),
+            bottom=Side(border_style="thin", color="000000")
+        )
+
 #process Inputs
+
 ws_sim = wb["Sim_Inputs"]
 ws_carprops = wb["Car_Properties"]
 ws_input = wb.create_sheet("Inputs")
@@ -639,18 +708,95 @@ car_prop_start_col = ws_input.max_column + 2
 for r_idx, row in enumerate(dataframe_to_rows(car_property_dp, index=False, header=True), start=car_prop_start_col):
     for c_idx, value in enumerate(row, start=1):
         ws_input.cell(row=c_idx, column=r_idx, value=value)
+# set A to 22 wide, D to 18
+ws_input.column_dimensions["A"].width = 22
+ws_input.column_dimensions["D"].width = 18
+for row in ws_input["A1":"A7"]:
+    for cell in row:
+        cell.alignment = Alignment(horizontal="right")
+        cell.font = Font(bold=True)
+for row in ws_input["D1":"D12"]:
+    for cell in row:
+        cell.alignment = Alignment(horizontal="right")
+        cell.font = Font(bold=True)
 #Process Link Extremes
 ws_link_extremes = wb["Link_Extremes"]
-for cell in ws_link_extremes[1]:
-    cell.font = Font(bold=True)
+ws_link_extremes.move_range(
+    f"A1:E7",
+    rows=1,
+    cols=0
+)
+ws_link_extremes.merge_cells("A1:A2")
+ws_link_extremes["A1"] = "Link"
+ws_link_extremes.merge_cells("B1:C1")
+ws_link_extremes["B1"] = "Front Max"
+ws_link_extremes.merge_cells("D1:E1")
+ws_link_extremes["D1"] = "Rear Max"
+ws_link_extremes["B2"] = "Tension (N)"
+ws_link_extremes["C2"] = "Compression (N)"
+ws_link_extremes["D2"] = "Tension (N)"
+ws_link_extremes["E2"] = "Compression (N)"
+ws_link_extremes.column_dimensions["B"].width = 11
+ws_link_extremes.column_dimensions["C"].width = 14
+ws_link_extremes.column_dimensions["D"].width = 11
+ws_link_extremes.column_dimensions["E"].width = 14
+for row in ws_link_extremes["A1":"A8"]:
+    for cell in row:
+        cell.alignment = Alignment(horizontal="right")
+for row in ws_link_extremes["A1":"E2"]:
+    for cell in row:
+        cell.alignment = Alignment(horizontal="center")
+        cell.font = Font(bold=True)
+        cell.border = Border(
+            left=Side(border_style="thin", color="000000"),
+            right=Side(border_style="thin", color="000000"),
+            top=Side(border_style="thin", color="000000"),
+            bottom=Side(border_style="thin", color="000000")
+        )
 #process pushrod things
 ws_pushrod = wb["Pushrod_Sweep"]
 for cell in ws_pushrod[1]:
     cell.font = Font(bold=True)
+for row in ws_pushrod["A2":f"B{ws_pushrod.max_row}"]:
+    for cell in row:
+        cell.number_format = '0.00'
+for row in ws_pushrod["C2":f"{get_column_letter(ws_pushrod.max_column)}{ws_pushrod.max_row}"]:
+    for cell in row:
+        cell.number_format = '0'
+ws_pushrod.merge_cells(f"A2:B2")
+ws_pushrod["A2"] = "Extremes"
+ws_pushrod["A2"].alignment = Alignment(horizontal="right")
+for row in ws_pushrod["A1":f"{get_column_letter(ws_pushrod.max_column)}2"]:
+    for cell in row:
+        cell.font = Font(bold=True)
+        cell.border = Border(
+            left=Side(border_style="thin", color="000000"),
+            right=Side(border_style="thin", color="000000"),
+            top=Side(border_style="thin", color="000000"),
+            bottom=Side(border_style="thin", color="000000")
+        )
 #Max Patch
 ws_max_patch = wb["Max_Contact_Patch"]
 for cell in ws_max_patch[1]:
     cell.font = Font(bold=True)
+for row in ws_max_patch["A2":f"B{ws_max_patch.max_row}"]:
+    for cell in row:
+        cell.number_format = '0.00'
+for row in ws_max_patch["C2":f"{get_column_letter(ws_max_patch.max_column)}{ws_max_patch.max_row}"]:
+    for cell in row:
+        cell.number_format = '0'
+ws_max_patch.merge_cells(f"A2:B2")
+ws_max_patch["A2"] = "Extremes"
+ws_max_patch["A2"].alignment = Alignment(horizontal="right")
+for row in ws_max_patch["A1":f"{get_column_letter(ws_max_patch.max_column)}2"]:
+    for cell in row:
+        cell.font = Font(bold=True)
+        cell.border = Border(
+            left=Side(border_style="thin", color="000000"),
+            right=Side(border_style="thin", color="000000"),
+            top=Side(border_style="thin", color="000000"),
+            bottom=Side(border_style="thin", color="000000")
+        )
 
 del wb["Sim_Inputs"]
 del wb["Car_Properties"]
