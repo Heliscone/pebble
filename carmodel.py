@@ -130,7 +130,7 @@ class MasterContactPatch:
         RH_bump = np.cross(bump_moment_arm_RH,bump_force)
         LH_bump = np.cross(bump_moment_arm_LH,bump_force)
 
-        cp_offset_list = [[hwb,-htw,0],[hwb,htw,0],[-hwb,-htw,0],[-hwb,htw,0]] 
+        cp_offset_list = [[hwb,-htw,0],[hwb,htw+0.025,0],[-hwb,-htw,0],[-hwb,htw+0.025,0]] 
         cp_list = [np.array(cp) + wheel_center_coord for cp in cp_offset_list] # list of places where we find C.P. (fl,fr,rl,rr as always)
 
         [fl_cp_coord,fr_cp_coord,rl_cp_coord,rr_cp_coord] = cp_list
@@ -297,62 +297,62 @@ def get_corner_compressive_extremes(minlinkload_dict):
 def get_max_thing(name,dataframe):
     return dataframe.loc[dataframe[name].abs().idxmax()][name]
 
-FLsusPointsFromNico = """1681.6	-204.5	-101.1
-1432.4	-204.5	-108.8
+FLsusPointsFromNico = """1656.2	-204.5	-101.9
+1407.1	-204.5	-109.6
 1540.1	-588.2	-100.9
-1670.6	-257.8	-231.9
-1428.6	-257.8	-210.1
+1645.3	-257.8	-229.7
+1403.3	-257.8	-207.8
 1523.5	-540.8	-291.0
-1638.3	-213.7	-154.9
-1632.4	-548.2	-194.4
-1523.5	-147.0	-607.0
-1523.5	-515.0	-316.7
+1600.2	-213.7	-154.9
+1630.0	-538.3	-192.0
+1523.5	-147.4	-606.7
+1523.5	-515.5	-311.3
 1523.5	-114.0	-565.2
 1447.3	-114.0	-565.2
 1523.5	-114.7	-610.9
 1447.3	-97.6	-525.2"""
-FRsusPointsFromNico = """1681.6	204.5	-101.1
-1432.4	204.5	-108.8
+FRsusPointsFromNico = """1656.2	204.5	-101.9
+1407.1	204.5	-109.6
 1540.1	588.2	-100.9
-1670.6	257.8	-231.9
-1428.6	257.8	-210.1
+1645.3	257.8	-229.7
+1403.3	257.8	-207.8
 1523.5	540.8	-291.0
-1638.3	213.7	-154.9
-1632.4	548.2	-194.4
-1523.5	147.0	-607.0
-1523.5	515.0	-316.7
+1600.2	213.7	-154.9
+1630.0	538.3	-192.0
+1523.5	147.4	-606.7
+1523.5	515.5	-311.3
 1523.5	114.0	-565.2
 1447.3	114.0	-565.2
 1523.5	114.7	-610.9
 1447.3	97.6	-605.1"""
-RLsusPointsFromNico = """84.4	-200.7	-121.2
--100.8	-200.7	-115.3
--7.4	-594.4	-101.0
-89.2	-274.3	-221.8
--96.7	-274.3	-238.4
--20.9	-539.1	-293.5
-102.9	-295.4	-187.2
+RLsusPointsFromNico = """33.6	-200.7	-122.3
+-164.3	-200.7	-116.8
+-25.4	-592.5	-107.3
+38.6	-274.3	-226.3
+-157.4	-274.3	-243.7
+-25.4	-539.1	-293.5
+64.8	-295.4	-187.2
 105.0	-575.0	-203.2
--20.9	-189.8	-489.6
--20.9	-511.2	-314.1
-36.2	-165.5	-445.0
--20.9	-165.5	-445.0
--20.9	-165.5	-494.5
-36.2	-153.5	-402.2"""
-RRsusPointsFromNico = """84.4	200.7	-121.2
--100.8	200.7	-115.3
--7.4	594.4	-101.0
-89.2	274.3	-221.8
--96.7	274.3	-238.4
--20.9	539.1	-293.5
-102.9	295.4	-187.2
+-65.8	-193.9	-522.9
+-28.0	-516.5	-308.5
+-2.2	-165.5	-491.3
+-58.5	-165.5	-481.4
+-67.1	-165.5	-530.2
+5.2	-153.5	-449.2"""
+RRsusPointsFromNico = """33.6	200.7	-122.3
+-164.3	200.7	-116.8
+-25.4	592.5	-107.3
+38.6	274.3	-226.3
+-157.4	274.3	-243.7
+-25.4	539.1	-293.5
+64.8	295.4	-187.2
 105.0	575.0	-203.2
--20.9	189.8	-489.6
--20.9	511.2	-314.1
-36.2	165.5	-445.0
--20.9	165.5	-445.0
--20.9	165.5	-494.5
-36.2	153.5	-487.8"""
+-65.8	193.9	-522.9
+-28.0	516.5	-308.5
+-2.2	165.5	-491.3
+-58.5	165.5	-481.4
+-67.1	165.5	-530.2
+-9.7	153.5	-533.5"""
 def parse_sus_points(data:str)->SusPoints:
     lines = data.strip().splitlines()
     points = [tuple(float(coord.replace(',',''))/1000 for coord in line.split()) for line in lines]
@@ -384,7 +384,7 @@ max_accel_g = 1.8
 max_braking_g = -1.8
 max_lateral_g = 2.4
 num_ellipse_points=48
-pushrod_points = 24
+pushrod_points = 25
 min_LLTD = 0.4
 max_LLTD = 0.55
 LLTD_points = 5
@@ -753,6 +753,9 @@ for row in ws_link_extremes["A1":"E2"]:
             top=Side(border_style="thin", color="000000"),
             bottom=Side(border_style="thin", color="000000")
         )
+for row in ws_link_extremes["B3":f"E8"]:
+    for cell in row:
+        cell.number_format = '0'
 #process pushrod things
 ws_pushrod = wb["Pushrod_Sweep"]
 for cell in ws_pushrod[1]:
