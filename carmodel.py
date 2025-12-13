@@ -7,6 +7,7 @@ from openpyxl import load_workbook
 from openpyxl.styles import Font, Border, Side, Alignment
 from openpyxl.utils import get_column_letter
 from openpyxl.utils.dataframe import dataframe_to_rows
+import time
 np.set_printoptions(legacy='1.25')
 
 # bump is applied vertically 
@@ -130,11 +131,10 @@ class MasterContactPatch:
         RH_bump = np.cross(bump_moment_arm_RH,bump_force)
         LH_bump = np.cross(bump_moment_arm_LH,bump_force)
 
-        cp_offset_list = [[hwb,-htw,0],[hwb,htw+0.025,0],[-hwb,-htw,0],[-hwb,htw+0.025,0]] 
+        cp_offset_list = [[hwb,-htw,0],[hwb,htw,0],[-hwb,-htw,0],[-hwb,htw,0]] 
         cp_list = [np.array(cp) + wheel_center_coord for cp in cp_offset_list] # list of places where we find C.P. (fl,fr,rl,rr as always)
 
         [fl_cp_coord,fr_cp_coord,rl_cp_coord,rr_cp_coord] = cp_list
-
         self.flCP = ContactPatch(forces[0],LH_bump,fl_cp_coord)
         self.frCP = ContactPatch(forces[1],RH_bump,fr_cp_coord)
         self.rlCP = ContactPatch(forces[2],LH_bump,rl_cp_coord)
@@ -190,8 +190,9 @@ class Car:
         self.frCP = self.masterCP.frCP
         self.rlCP = self.masterCP.rlCP
         self.rrCP = self.masterCP.rrCP
-        self.flCorner = Corner(self.flSus,self.flCP)
         self.frCorner = Corner(self.frSus,self.frCP)
+        # wait for 30 seconds
+        self.flCorner = Corner(self.flSus,self.flCP)
         self.rlCorner = Corner(self.rlSus,self.rlCP)
         self.rrCorner = Corner(self.rrSus,self.rrCP)
 def tire_ellipse(max_accel_g,max_braking_g,max_lateral_g,num_points):
@@ -359,20 +360,21 @@ def parse_sus_points(data:str)->SusPoints:
     return SusPoints(*points)
 flSus = parse_sus_points(FLsusPointsFromNico)
 frSus = parse_sus_points(FRsusPointsFromNico)
+print(frSus.pushOut)
 rlSus = parse_sus_points(RLsusPointsFromNico)
 rrSus = parse_sus_points(RRsusPointsFromNico)
 masterSus = MasterSusPoints(FL=flSus, FR=frSus, RL=rlSus, RR=rrSus, name="Nico Sus Points")
 
 props = CarProps(
-    wheelbase=1.54, 
+    wheelbase=1.5367, 
     trackwidth=1.27, 
     cg_height=0.2921, 
     cp_height = 0.96,
     mass=295,
-    aero_load=1866,
-    fwb=0.45,
+    aero_load=1540,
+    fwb=0.5,
     aero_fwb=0.42,
-    drag_force=823.3,
+    drag_force=658,
     gear_ratio=10.5,
     max_amk_torque=21,
     tire_radius=0.2032,
@@ -382,7 +384,7 @@ props = CarProps(
 ### PROPERTIES. HELLO. CHANGE THESE. ###
 max_accel_g = 1.8
 max_braking_g = -1.8
-max_lateral_g = 2.4
+max_lateral_g = 2.2
 num_ellipse_points=48
 pushrod_points = 25
 min_LLTD = 0.4
