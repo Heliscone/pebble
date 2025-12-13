@@ -201,8 +201,8 @@ def tire_ellipse(max_accel_g,max_braking_g,max_lateral_g,num_points):
     max_braking = max_braking_g * g
     max_lateral = max_lateral_g * g
     angles = np.linspace(0,2*np.pi,num_points,endpoint=False)
-    a_x_points = abs(max_braking) * np.sin(angles)
-    a_y_points = max_lateral * np.cos(angles)
+    a_x_points = abs(max_braking) * np.cos(angles)
+    a_y_points = max_lateral * np.sin(angles)
     ellipse_points = [(a_x,a_y) for a_x,a_y in zip(a_x_points,a_y_points)]
     return ellipse_points
 def analyze_link_loads(fl_link_loads,fr_link_loads,rl_link_loads,rr_link_loads):
