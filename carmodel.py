@@ -384,7 +384,7 @@ props = CarProps(
 ### PROPERTIES. HELLO. CHANGE THESE. ###
 max_accel_g = 1.8
 max_braking_g = -1.8
-max_lateral_g = 2.2
+max_lateral_g = 1.97
 num_ellipse_points=48
 pushrod_points = 25
 min_LLTD = 0.4
