@@ -98,8 +98,11 @@ class CarProps:
     cg_height: float
     mass: float
     cp_height: float
+    cl_a: float
     aero_load: float
+    cd_a: float
     drag_force: float
+    v: float
     fwb: float
     aero_fwb: float
     gear_ratio: float
@@ -299,87 +302,89 @@ def get_max_thing(name,dataframe):
     return dataframe.loc[dataframe[name].abs().idxmax()][name]
 
 FLsusPointsFromNico = """1656.2	-204.5	-101.9
-1407.1	-204.5	-109.6
-1540.1	-588.2	-100.9
-1645.3	-257.8	-229.7
-1403.3	-257.8	-207.8
-1523.5	-540.8	-291.0
-1600.2	-213.7	-128.3
-1634.3	-550.4	-143.7
-1523.5	-147.4	-606.7
-1523.5	-515.5	-311.3
-1523.5	-114.0	-565.2
-1447.3	-114.0	-565.2
-1523.5	-114.7	-610.9
-1447.3	-97.6	-525.2"""
+1367.9	-204.5	-110.9
+1535.7	-588.7	-100.9
+1645.3	-257.8	-230.2
+1377.3	-257.8	-205.7
+1515.7	-537.8	-291.0
+1600.2	-213.7	-135.1
+1633.2	-547.2	-156.3
+1523.5	-146.1	-588.7
+1523.5	-513.8	-311.3
+1523.5	-114.0	-546.1
+1447.3	-114.0	-546.1
+1523.5	-100.6	-589.8
+1447.3	-97.6	-506.1"""
 FRsusPointsFromNico = """1656.2	204.5	-101.9
-1407.1	204.5	-109.6
-1540.1	588.2	-100.9
-1645.3	257.8	-229.7
-1403.3	257.8	-207.8
-1523.5	540.8	-291.0
-1600.2	213.7	-128.3
-1634.3	550.4	-143.7
-1523.5	147.4	-606.7
-1523.5	515.5	-311.3
-1523.5	114.0	-565.2
-1447.3	114.0	-565.2
-1523.5	114.7	-610.9
-1447.3	97.6	-605.1"""
+1367.9	204.5	-110.9
+1535.7	588.7	-100.9
+1645.3	257.8	-230.2
+1377.3	257.8	-205.7
+1515.7	537.8	-291.0
+1600.2	213.7	-135.1
+1633.2	547.2	-156.3
+1523.5	146.1	-588.7
+1523.5	513.8	-311.3
+1523.5	114.0	-546.1
+1447.3	114.0	-546.1
+1523.5	100.6	-589.8
+1447.3	97.6	-586.1"""
 RLsusPointsFromNico = """25.4	-200.7	-122.0
 -164.3	-200.7	-116.8
 -25.4	-592.5	-107.3
 38.6	-274.3	-226.3
 -157.4	-274.3	-243.7
 -25.4	-539.1	-293.5
-64.8	-295.4	-187.2
-105.0	-575.0	-203.2
--65.8	-193.9	-522.9
--28.0	-516.5	-308.5
--114.8	-165.5	-471.5
--58.5	-165.5	-481.4
--67.1	-165.5	-530.2
--107.4	-153.5	-429.3"""
+49.5	-294.6	-172.4
+101.6	-566.6	-197.8
+-25.4	-193.7	-524.8
+-25.4	-516.4	-308.8
+-82.6	-165.5	-482.6
+-25.4	-165.5	-482.6
+-25.4	-165.5	-532.1
+-82.6	-153.5	-439.8"""
 RRsusPointsFromNico = """25.4	200.7	-122.0
 -164.3	200.7	-116.8
 -25.4	592.5	-107.3
 38.6	274.3	-226.3
 -157.4	274.3	-243.7
 -25.4	539.1	-293.5
-64.8	295.4	-187.2
-105.0	575.0	-203.2
--65.8	193.9	-522.9
--28.0	516.5	-308.5
--114.8	165.5	-471.5
--58.5	165.5	-481.4
--67.1	165.5	-530.2
--122.2	153.5	-513.6"""
+49.5	294.6	-172.4
+101.6	566.6	-197.8
+-25.4	193.7	-524.8
+-25.4	516.4	-308.8
+-82.6	165.5	-482.6
+-25.4	165.5	-482.6
+-25.4	165.5	-532.1
+-82.6	153.5	-525.4"""
 def parse_sus_points(data:str)->SusPoints:
     lines = data.strip().splitlines()
     points = [tuple(float(coord.replace(',',''))/1000 for coord in line.split()) for line in lines]
-    return SusPoints(*points)
+    return SusPoints(*points)   
 flSus = parse_sus_points(FLsusPointsFromNico)
 frSus = parse_sus_points(FRsusPointsFromNico)
-print(frSus.pushOut)
 rlSus = parse_sus_points(RLsusPointsFromNico)
 rrSus = parse_sus_points(RRsusPointsFromNico)
 masterSus = MasterSusPoints(FL=flSus, FR=frSus, RL=rlSus, RR=rrSus, name="Nico Sus Points")
 
 props = CarProps(
-    wheelbase=1.5367, 
-    trackwidth=1.27, 
-    cg_height=0.2921, 
-    cp_height = 0.96,
+    wheelbase=1.5367, #60.5"
+    trackwidth=1.27, #50"
+    cg_height=0.0254*11.5, # 11.5" 
+    cp_height = 0.36,
     mass=295,
-    aero_load=1540,
-    fwb=0.5,
-    aero_fwb=0.42,
-    drag_force=658,
+    cl_a = 2.8,
+    cd_a=1.2,
+    v=60.5,
+    fwb=0.48,
+    aero_fwb=0.52,
+    aero_load=6060,
+    drag_force=2589,
     gear_ratio=10.5,
     max_amk_torque=21,
     tire_radius=0.2032,
-    LLTD=0.5,
-    bump_amount=0,
+    LLTD=0.55,
+    bump_amount=2000,
     bump_moment_arm_outward=0)
 ### PROPERTIES. HELLO. CHANGE THESE. ###
 max_accel_g = 1.8
@@ -393,7 +398,15 @@ LLTD_points = 5
 max_bump = -2000 #N, must be negative
 bump_amt_points= 3
 bump_location_inch = 3
-bump_location_points = 5
+bump_location_points = 3
+min_v=12.5
+max_v=60.5
+v_points = 5
+
+test_car = Car(sus=masterSus,props=props,a_x=0,a_y=0)
+# print("hallo")
+print("normal forces: ",test_car.masterCP._normal_solver(a_x=-12.48,a_y=-13.66,LLTD=props.LLTD))
+
 ### END PROPERTIES. BYE. ###
 sim_property_dp = pd.DataFrame([
     {
@@ -426,12 +439,12 @@ my_ellipse = tire_ellipse(max_accel_g,max_braking_g,max_lateral_g,num_ellipse_po
 pushpoint_ellipse = tire_ellipse(max_accel_g,max_braking_g,max_lateral_g,pushrod_points)
 LLTD_range = np.linspace(min_LLTD,max_LLTD,LLTD_points)
 bump_range = np.linspace(0,max_bump,bump_amt_points)
-bump_location_range = np.linspace(0,bump_location_inch*0.0254,bump_location_points) # assumption! we are not hitting cone left of centerline of CP
-
+bump_location_range = np.linspace(0,bump_location_inch*0.0254,bump_location_points) # assumption! we are not hitting cone left of centerline of CP (right side)
+velocity_range = np.linspace(min_v,max_v,v_points)
 ### call me BROOM the way i sweep ###
 big_sweep = pd.DataFrame(
     columns=[
-        "a_x","a_y","LLTD","bump",
+        "a_x","a_y","v","LLTD","bump",
         "FL_Low_Fore","FL_Low_Aft","FL_Up_Fore","FL_Up_Aft","FL_Tie","FL_Push",
         "FR_Low_Fore","FR_Low_Aft","FR_Up_Fore","FR_Up_Aft","FR_Tie","FR_Push",
         "RL_Low_Fore","RL_Low_Aft","RL_Up_Fore","RL_Up_Aft","RL_Toe","RL_Push",
@@ -444,87 +457,100 @@ big_sweep = pd.DataFrame(
 )
 push_sweep = pd.DataFrame(
     columns = [
-        "a_x","a_y","FR_Push","RR_Push"
+        "a_x","a_y","v","FR_Push","RR_Push"
     ]
 )
 for bump in bump_range:
     for lltd in LLTD_range:
-        for bump_location in bump_location_range:
-            props.bump_moment_arm_outward = bump_location
-            props.LLTD = lltd
-            props.bump_amount = max_bump
-            sweep_point = real_sweep_tire_ellipse(my_ellipse,masterSus,props)
-            push_sweep_point = real_sweep_tire_ellipse(pushpoint_ellipse,masterSus,props)
-            for car in sweep_point:
-                fl_link_load,fr_link_load,rl_link_load,rr_link_load = get_link_loads_from_car(car)
-                row = {
-                    "a_x":car.masterCP.a_x,
-                    "a_y":car.masterCP.a_y,
-                    "LLTD":lltd,
-                    "bump":bump,
-                    "FL_Low_Fore":fl_link_load[0],
-                    "FL_Low_Aft":fl_link_load[1],
-                    "FL_Up_Fore":fl_link_load[2],
-                    "FL_Up_Aft":fl_link_load[3],
-                    "FL_Tie":fl_link_load[4],
-                    "FL_Push":fl_link_load[5],
-                    "FR_Low_Fore":fr_link_load[0],
-                    "FR_Low_Aft":fr_link_load[1],
-                    "FR_Up_Fore":fr_link_load[2],
-                    "FR_Up_Aft":fr_link_load[3],
-                    "FR_Tie":fr_link_load[4],
-                    "FR_Push":fr_link_load[5],
-                    "RL_Low_Fore":rl_link_load[0],
-                    "RL_Low_Aft":rl_link_load[1],
-                    "RL_Up_Fore":rl_link_load[2],
-                    "RL_Up_Aft":rl_link_load[3],
-                    "RL_Toe":rl_link_load[4],
-                    "RL_Push":rl_link_load[5],
-                    "RR_Low_Fore":rr_link_load[0],
-                    "RR_Low_Aft":rr_link_load[1],
-                    "RR_Up_Fore":rr_link_load[2],
-                    "RR_Up_Aft":rr_link_load[3],
-                    "RR_Toe":rr_link_load[4],
-                    "RR_Push":rr_link_load[5],
-                    "FL_Fx":car.flCP.contact_patch_forces[0],
-                    "FL_Fy":car.flCP.contact_patch_forces[1],
-                    "FL_Fz":car.flCP.contact_patch_forces[2],
-                    "FL_Mx":car.flCP.contact_patch_moments[0],
-                    "FL_My":car.flCP.contact_patch_moments[1],
-                    "FL_Mz":car.flCP.contact_patch_moments[2],
-                    "FR_Fx":car.frCP.contact_patch_forces[0],
-                    "FR_Fy":car.frCP.contact_patch_forces[1],
-                    "FR_Fz":car.frCP.contact_patch_forces[2],
-                    "FR_Mx":car.frCP.contact_patch_moments[0],
-                    "FR_My":car.frCP.contact_patch_moments[1],
-                    "FR_Mz":car.frCP.contact_patch_moments[2],
-                    "RL_Fx":car.rlCP.contact_patch_forces[0],
-                    "RL_Fy":car.rlCP.contact_patch_forces[1],
-                    "RL_Fz":car.rlCP.contact_patch_forces[2],
-                    "RL_Mx":car.rlCP.contact_patch_moments[0],
-                    "RL_My":car.rlCP.contact_patch_moments[1],
-                    "RL_Mz":car.rlCP.contact_patch_moments[2],
-                    "RR_Fx":car.rrCP.contact_patch_forces[0],
-                    "RR_Fy":car.rrCP.contact_patch_forces[1],
-                    "RR_Fz":car.rrCP.contact_patch_forces[2],
-                    "RR_Mx":car.rrCP.contact_patch_moments[0],
-                    "RR_My":car.rrCP.contact_patch_moments[1],
-                    "RR_Mz":car.rrCP.contact_patch_moments[2],
-                }
-                big_sweep = pd.concat([big_sweep,pd.DataFrame([row])],ignore_index=True)
-            for car in push_sweep_point:
-                fl_link_load,fr_link_load,rl_link_load,rr_link_load = get_link_loads_from_car(car)
-                push_row = {
-                    "a_x":car.masterCP.a_x,
-                    "a_y":car.masterCP.a_y,
-                    "FL_Push":fl_link_load[5],
-                    "FR_Push":fr_link_load[5],
-                    "RL_Push":rl_link_load[5],
-                    "RR_Push":rr_link_load[5]
-                }
-                push_sweep = pd.concat([push_sweep,pd.DataFrame([push_row])],ignore_index=True)
-            if bump==0:
-                break
+        for velocity in velocity_range:
+            for bump_location in bump_location_range:
+                # update props based on loop variables
+                props.v = velocity
+                props.drag_force = 0.5 * 1.18 * (velocity**2) * props.cd_a
+                props.aero_load = 0.5 * 1.18 * (velocity**2) * props.cl_a
+                props.bump_moment_arm_outward = bump_location
+                props.LLTD = lltd
+                props.bump_amount = max_bump
+                sweep_point = real_sweep_tire_ellipse(my_ellipse,masterSus,props)
+                push_sweep_point = real_sweep_tire_ellipse(pushpoint_ellipse,masterSus,props)
+                for car in sweep_point:
+                    # if car.masterCP.a_x<-12.47 and car.masterCP.a_y<-13.65 and car.masterCP.a_x>-12.49 and car.masterCP.a_y>-13.67 and car.props.v>60 and car.props.LLTD>0.54:
+                    #     print(car.masterCP.a_x,car.masterCP.a_y,car.props.v,lltd,bump)
+                    #     print(car.frCP.contact_patch_forces)                        
+                    #     print(str(car.props.drag_force)+" is drag in the car in loop")
+                    fl_link_load,fr_link_load,rl_link_load,rr_link_load = get_link_loads_from_car(car)
+                    row = {
+                        "a_x":car.masterCP.a_x,
+                        "a_y":car.masterCP.a_y,
+                        "v":velocity,
+                        "LLTD":lltd,
+                        "bump":bump,
+                        "FL_Low_Fore":fl_link_load[0],
+                        "FL_Low_Aft":fl_link_load[1],
+                        "FL_Up_Fore":fl_link_load[2],
+                        "FL_Up_Aft":fl_link_load[3],
+                        "FL_Tie":fl_link_load[4],
+                        "FL_Push":fl_link_load[5],
+                        "FR_Low_Fore":fr_link_load[0],
+                        "FR_Low_Aft":fr_link_load[1],
+                        "FR_Up_Fore":fr_link_load[2],
+                        "FR_Up_Aft":fr_link_load[3],
+                        "FR_Tie":fr_link_load[4],
+                        "FR_Push":fr_link_load[5],
+                        "RL_Low_Fore":rl_link_load[0],
+                        "RL_Low_Aft":rl_link_load[1],
+                        "RL_Up_Fore":rl_link_load[2],
+                        "RL_Up_Aft":rl_link_load[3],
+                        "RL_Toe":rl_link_load[4],
+                        "RL_Push":rl_link_load[5],
+                        "RR_Low_Fore":rr_link_load[0],
+                        "RR_Low_Aft":rr_link_load[1],
+                        "RR_Up_Fore":rr_link_load[2],
+                        "RR_Up_Aft":rr_link_load[3],
+                        "RR_Toe":rr_link_load[4],
+                        "RR_Push":rr_link_load[5],
+                        "FL_Fx":car.flCP.contact_patch_forces[0],
+                        "FL_Fy":car.flCP.contact_patch_forces[1],
+                        "FL_Fz":car.flCP.contact_patch_forces[2],
+                        "FL_Mx":car.flCP.contact_patch_moments[0],
+                        "FL_My":car.flCP.contact_patch_moments[1],
+                        "FL_Mz":car.flCP.contact_patch_moments[2],
+                        "FR_Fx":car.frCP.contact_patch_forces[0],
+                        "FR_Fy":car.frCP.contact_patch_forces[1],
+                        "FR_Fz":car.frCP.contact_patch_forces[2],
+                        "FR_Mx":car.frCP.contact_patch_moments[0],
+                        "FR_My":car.frCP.contact_patch_moments[1],
+                        "FR_Mz":car.frCP.contact_patch_moments[2],
+                        "RL_Fx":car.rlCP.contact_patch_forces[0],
+                        "RL_Fy":car.rlCP.contact_patch_forces[1],
+                        "RL_Fz":car.rlCP.contact_patch_forces[2],
+                        "RL_Mx":car.rlCP.contact_patch_moments[0],
+                        "RL_My":car.rlCP.contact_patch_moments[1],
+                        "RL_Mz":car.rlCP.contact_patch_moments[2],
+                        "RR_Fx":car.rrCP.contact_patch_forces[0],
+                        "RR_Fy":car.rrCP.contact_patch_forces[1],
+                        "RR_Fz":car.rrCP.contact_patch_forces[2],
+                        "RR_Mx":car.rrCP.contact_patch_moments[0],
+                        "RR_My":car.rrCP.contact_patch_moments[1],
+                        "RR_Mz":car.rrCP.contact_patch_moments[2],
+                    }
+                    # a_x=-12.48,a_y=-13.66
+                    
+                    big_sweep = pd.concat([big_sweep,pd.DataFrame([row])],ignore_index=True)
+                for car in push_sweep_point:
+                    fl_link_load,fr_link_load,rl_link_load,rr_link_load = get_link_loads_from_car(car)
+                    push_row = {
+                        "a_x":car.masterCP.a_x,
+                        "a_y":car.masterCP.a_y,
+                        "v":car.props.v,
+                        "FL_Push":fl_link_load[5],
+                        "FR_Push":fr_link_load[5],
+                        "RL_Push":rl_link_load[5],
+                        "RR_Push":rr_link_load[5]
+                    }
+                    push_sweep = pd.concat([push_sweep,pd.DataFrame([push_row])],ignore_index=True)
+                if bump==0:
+                    break
 # Shinyoung Kang
 shinyoung = pd.DataFrame()
 for ax,ay in pushpoint_ellipse:
@@ -551,7 +577,7 @@ shinyoung = pd.concat(
 )
 # for each ellipse point, get highest magnitude Fx,Fy,Fz Mx,My,Mz on right side
 distilled_sweep = pd.DataFrame()
-for col in ["a_x","a_y", "FR_Fx","FR_Fy","FR_Fz","FR_Mx","FR_My","FR_Mz",
+for col in ["a_x","a_y","v", "FR_Fx","FR_Fy","FR_Fz","FR_Mx","FR_My","FR_Mz",
             "RR_Fx","RR_Fy","RR_Fz","RR_Mx","RR_My","RR_Mz"]:
     distilled_sweep[col] = big_sweep[col]
 max_patch = pd.DataFrame()
