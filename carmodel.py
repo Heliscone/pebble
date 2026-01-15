@@ -400,7 +400,7 @@ bump_amt_points= 3
 bump_location_inch = 3
 bump_location_points = 3
 min_v=12.5
-max_v=60.5
+max_v=30.5
 v_points = 5
 
 test_car = Car(sus=masterSus,props=props,a_x=0,a_y=0)
