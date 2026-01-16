@@ -301,62 +301,62 @@ def get_corner_compressive_extremes(minlinkload_dict):
 def get_max_thing(name,dataframe):
     return dataframe.loc[dataframe[name].abs().idxmax()][name]
 
-FLsusPointsFromNico = """1656.2	-204.5	-101.9
-1367.9	-204.5	-110.9
+FLsusPointsFromNico = """1656.8	-204.5	-101.9
+1365.3	-204.5	-110.9
 1535.7	-588.7	-100.9
-1645.3	-257.8	-230.2
-1377.3	-257.8	-205.7
+1644.2	-257.8	-230.1
+1376.8	-257.8	-205.7
 1515.7	-537.8	-291.0
-1600.2	-213.7	-135.1
-1633.2	-547.2	-156.3
-1523.5	-146.1	-588.7
-1523.5	-513.8	-311.3
-1523.5	-114.0	-546.1
-1447.3	-114.0	-546.1
-1523.5	-100.6	-589.8
-1447.3	-97.6	-506.1"""
-FRsusPointsFromNico = """1656.2	204.5	-101.9
-1367.9	204.5	-110.9
+1600.2	-213.7	-128.3
+1629.1	-550.1	-143.7
+1515.7	-138.0	-609.9
+1515.7	-515.5	-308.8
+1515.7	-116.5	-546.1
+1457.3	-116.5	-546.1
+1515.7	-95.9	-595.3
+1457.3	-95.5	-501.3"""
+FRsusPointsFromNico = """1656.8	204.5	-101.9
+1365.3	204.5	-110.9
 1535.7	588.7	-100.9
-1645.3	257.8	-230.2
-1377.3	257.8	-205.7
+1644.2	257.8	-230.1
+1376.8	257.8	-205.7
 1515.7	537.8	-291.0
-1600.2	213.7	-135.1
-1633.2	547.2	-156.3
-1523.5	146.1	-588.7
-1523.5	513.8	-311.3
-1523.5	114.0	-546.1
-1447.3	114.0	-546.1
-1523.5	100.6	-589.8
-1447.3	97.6	-586.1"""
+1600.2	213.7	-128.3
+1629.1	550.1	-143.7
+1515.7	138.0	-609.9
+1515.7	515.5	-308.8
+1515.7	116.5	-546.1
+1457.3	116.5	-546.1
+1515.7	95.9	-595.3
+1457.3	95.5	-590.9"""
 RLsusPointsFromNico = """25.4	-200.7	-122.0
--164.3	-200.7	-116.8
+-161.8	-200.7	-116.9
 -25.4	-592.5	-107.3
 38.6	-274.3	-226.3
--157.4	-274.3	-243.7
+-148.5	-274.3	-242.9
 -25.4	-539.1	-293.5
 49.5	-294.6	-172.4
 101.6	-566.6	-197.8
--25.4	-193.7	-524.8
--25.4	-516.4	-308.8
--82.6	-165.5	-482.6
--25.4	-165.5	-482.6
--25.4	-165.5	-532.1
--82.6	-153.5	-439.8"""
+-25.4	-206.0	-531.2
+-25.4	-517.8	-308.8
+-82.6	-171.3	-482.6
+-25.4	-171.3	-482.6
+-25.4	-165.5	-530.5
+-82.6	-157.0	-435.2"""
 RRsusPointsFromNico = """25.4	200.7	-122.0
--164.3	200.7	-116.8
+-161.8	200.7	-116.9
 -25.4	592.5	-107.3
 38.6	274.3	-226.3
--157.4	274.3	-243.7
+-148.5	274.3	-242.9
 -25.4	539.1	-293.5
 49.5	294.6	-172.4
 101.6	566.6	-197.8
--25.4	193.7	-524.8
--25.4	516.4	-308.8
--82.6	165.5	-482.6
--25.4	165.5	-482.6
--25.4	165.5	-532.1
--82.6	153.5	-525.4"""
+-25.4	206.0	-531.2
+-25.4	517.8	-308.8
+-82.6	171.3	-482.6
+-25.4	171.3	-482.6
+-25.4	165.5	-530.5
+-82.6	157.0	-530.0"""
 def parse_sus_points(data:str)->SusPoints:
     lines = data.strip().splitlines()
     points = [tuple(float(coord.replace(',',''))/1000 for coord in line.split()) for line in lines]
@@ -413,6 +413,8 @@ sim_property_dp = pd.DataFrame([
         "accel (g)":max_accel_g,
         "braking (g)":max_braking_g,
         "lateral (g)":max_lateral_g,
+        "v min (m/s)":min_v,
+        "v max (m/s)":max_v,
         "LLTD min":min_LLTD,
         "LLTD max":max_LLTD,
         "bump (N)":max_bump,
@@ -426,10 +428,10 @@ car_property_dp = pd.DataFrame([
         "cg_height (m)":props.cg_height,
         "cp_height (m)":props.cp_height,
         "mass (kg)":props.mass,
-        "aero_load (N)":props.aero_load,
+        "C_lA (m^2)":props.cl_a,
         "fwb":props.fwb,
-        "aero_fwb":props.aero_fwb,
-        "drag_force (N)":props.drag_force,
+        "aero_bal":props.aero_fwb,
+        "C_dA (m^2)":props.cd_a,
         "gear_ratio":props.gear_ratio,
         "max_amk_torque (Nm)":props.max_amk_torque,
         "tire_radius (m)":props.tire_radius
@@ -577,8 +579,8 @@ shinyoung = pd.concat(
 )
 # for each ellipse point, get highest magnitude Fx,Fy,Fz Mx,My,Mz on right side
 distilled_sweep = pd.DataFrame()
-for col in ["a_x","a_y","v", "FR_Fx","FR_Fy","FR_Fz","FR_Mx","FR_My","FR_Mz",
-            "RR_Fx","RR_Fy","RR_Fz","RR_Mx","RR_My","RR_Mz"]:
+for col in ["a_x","a_y","FR_Fx","FR_Fy","FR_Fz","FR_Mx","FR_My","FR_Mz",
+            "RR_Fx","RR_Fy","RR_Fz","RR_Mx","RR_My","RR_Mz","v"]:
     distilled_sweep[col] = big_sweep[col]
 max_patch = pd.DataFrame()
 for ax,ay in my_ellipse:
@@ -679,7 +681,16 @@ num_rows = ws_master.max_row
 for row in ws_master["A2":f"B{num_rows}"]:
     for cell in row:
         cell.number_format = '0.00'
-for row in ws_master["C2":f"AZ{num_rows}"]:
+for row in ws_master["C2":f"C{num_rows}"]:
+    for cell in row:
+        cell.number_format = '0.0'
+for row in ws_master["D2":f"D{num_rows}"]:
+    for cell in row:
+        cell.number_format = '0.00'
+for row in ws_master["E2":f"E{num_rows}"]:
+    for cell in row:
+        cell.number_format = '0'
+for row in ws_master["F2":f"AZ{num_rows}"]:
     for cell in row:
         cell.number_format = '0'
 ws_master.move_range(
@@ -687,20 +698,20 @@ ws_master.move_range(
     rows=1,
     cols=0
 )
-ws_master.merge_cells("E1:J1")
-ws_master["E1"] = "Front Left"
-ws_master.merge_cells("K1:P1")
-ws_master["K1"] = "Front Right"
-ws_master.merge_cells("Q1:V1")
-ws_master["Q1"] = "Rear Left"
-ws_master.merge_cells("W1:AB1")
-ws_master["W1"] = "Rear Right"
+ws_master.merge_cells("F1:K1")
+ws_master["F1"] = "Front Left"
+ws_master.merge_cells("L1:Q1")
+ws_master["L1"] = "Front Right"
+ws_master.merge_cells("R1:W1")
+ws_master["R1"] = "Rear Left"
+ws_master.merge_cells("X1:AC1")
+ws_master["X1"] = "Rear Right"
 links = ["Low Fore","Low Aft","Up Fore","Up Aft","Tie","Push"]
 for i,link in enumerate(links):
-    fl_col = get_column_letter(5 + i)
-    fr_col = get_column_letter(11 + i)
-    rl_col = get_column_letter(17 + i)
-    rr_col = get_column_letter(23 + i)
+    fl_col = get_column_letter(6 + i)
+    fr_col = get_column_letter(12 + i)
+    rl_col = get_column_letter(18 + i)
+    rr_col = get_column_letter(24 + i)
     ws_master[f"{fl_col}2"] = f"{link}"
     ws_master[f"{fr_col}2"] = f"{link}"
     ws_master[f"{rl_col}2"] = f"{link}"
@@ -709,10 +720,12 @@ ws_master.merge_cells("A1:A2")
 ws_master.merge_cells("B1:B2")
 ws_master.merge_cells("C1:C2")
 ws_master.merge_cells("D1:D2")
+ws_master.merge_cells("E1:E2")
 ws_master["A1"] = "a_x (m/s²)"
 ws_master["B1"] = "a_y (m/s²)"
-ws_master["C1"] = "LLTD"
-ws_master["D1"] = "Bump (N)"
+ws_master["C1"] = "v (m/s)"
+ws_master["D1"] = "LLTD"
+ws_master["E1"] = "Bump (N)"
 for row in ws_master["A1":f"{get_column_letter(ws_master.max_column)}2"]:
     for cell in row:
         cell.alignment = Alignment(horizontal="center")
@@ -739,7 +752,7 @@ for r_idx, row in enumerate(dataframe_to_rows(car_property_dp, index=False, head
 # set A to 22 wide, D to 18
 ws_input.column_dimensions["A"].width = 22
 ws_input.column_dimensions["D"].width = 18
-for row in ws_input["A1":"A7"]:
+for row in ws_input["A1":"A9"]:
     for cell in row:
         cell.alignment = Alignment(horizontal="right")
         cell.font = Font(bold=True)
